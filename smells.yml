@@ -1,0 +1,693 @@
+schema: v1
+name: "KatalIA Smell Catalog (Runtime)"
+version: "2026.01c"
+
+defaults:
+  # Si un smell no define signals_mode, el motor usa este.
+  signals_mode: any  # any=OR, all=AND
+
+  # Convención: si un signal usa percentile, el motor calcula el umbral
+  # sobre la población indicada (population).
+  percentile_method: linear_interpolation
+
+  # Ventanas por defecto para smells históricos (si el extractor lo soporta)
+  history_window_days: 180
+
+code_smells:
+  - id: DUPLICATE_CODE
+    scope: file_or_component
+    intent: "Duplicación que aumenta el costo de cambio y el riesgo de inconsistencias."
+    signals_mode: any
+    requires: [clone]
+    signals:
+      - kind: clone
+        metric: clone_ratio          # 0..1
+        op: ">="
+        value: 0.10
+      - kind: clone
+        metric: dup_lines            # líneas duplicadas absolutas
+        op: ">="
+        value: 30
+    evidence: [path, clone_ratio, dup_lines, dup_blocks]
+    severity: high
+    confidence: medium
+
+  - id: LONG_METHOD
+    scope: function_or_method
+    intent: "Método largo: difícil de entender, testear y refactorizar."
+    signals_mode: all
+    requires: [metric]
+    signals:
+      - kind: metric
+        metric: function_sloc
+        op: ">="
+        value: 40
+      - kind: metric
+        metric: function_cc
+        op: ">="
+        value: 10
+    evidence: [path, function_name, lineno, function_sloc, function_cc]
+    severity: high
+    confidence: medium
+
+  - id: COMPLEX_CONDITIONAL
+    scope: function_or_method
+    intent: "Condiciones con demasiada lógica booleana/anidación (legibilidad cae)."
+    signals_mode: all
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: bool_op_count
+        op: ">="
+        value: 6
+      - kind: metric
+        metric: nesting_depth
+        op: ">="
+        value: 4
+    evidence: [path, function_name, lineno, bool_op_count, nesting_depth]
+    severity: medium_high
+    confidence: medium
+
+  - id: COMPLEX_METHOD
+    scope: function_or_method
+    intent: "Complejidad alta por caminos de ejecución; cuesta testear y cambiar."
+    signals_mode: any
+    requires: [metric]
+    signals:
+      - kind: metric
+        metric: function_cc
+        op: ">="
+        value: 15
+    evidence: [path, function_name, lineno, function_cc]
+    severity: high
+    confidence: medium
+
+  - id: LONG_PARAMETER_LIST
+    scope: function_or_method
+    intent: "Demasiados parámetros: acoplamiento implícito y API frágil."
+    signals_mode: any
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: n_params
+        op: ">="
+        value: 6
+    evidence: [path, function_name, lineno, n_params]
+    severity: medium
+    confidence: medium
+
+  - id: LONG_STATEMENT
+    scope: function_or_method
+    intent: "Sentencias gigantes (expresiones) que esconden intención."
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: max_stmt_tokens
+        op: ">="
+        value: 80
+    evidence: [path, function_name, lineno, max_stmt_tokens]
+    severity: medium
+    confidence: low_medium
+
+  - id: MAGIC_NUMBER
+    scope: file_or_component
+    intent: "Constantes literales repetidas sin nombre: ambigüedad y bugs."
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: magic_number_count
+        op: ">="
+        value: 8
+    evidence: [path, magic_number_count, examples]
+    severity: medium
+    confidence: low_medium
+
+  - id: MISSING_DEFAULT
+    scope: function_or_method
+    intent: "Switch/match sin default (o equivalente): casos no cubiertos."
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: match_without_wildcard
+        op: "=="
+        value: true
+    evidence: [path, function_name, lineno]
+    severity: medium
+    confidence: medium
+
+  - id: EMPTY_CATCH_CLAUSE
+    scope: function_or_method
+    intent: "Excepciones tragadas: oculta fallos y complica diagnóstico."
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: empty_except_handlers
+        op: ">="
+        value: 1
+    evidence: [path, function_name, lineno, empty_except_handlers]
+    severity: high
+    confidence: medium
+
+  - id: LONG_IDENTIFIER
+    scope: file_or_component
+    intent: "Nombres excesivamente largos: señal de conceptos mezclados o falta de modelado."
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: max_identifier_length
+        op: ">="
+        value: 40
+    evidence: [path, max_identifier_length, examples]
+    severity: low_medium
+    confidence: low
+
+  - id: ABSTRACT_FUNCTION_CALL_FROM_CONSTRUCTOR
+    scope: class
+    intent: "Llamar métodos sobreescribibles en __init__ (o ctor) crea bugs sutiles."
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: overridable_call_in_constructor
+        op: "=="
+        value: true
+    evidence: [path, class_name, constructor_name, call_sites]
+    severity: high
+    confidence: medium
+
+  - id: LARGE_CLASS
+    scope: class
+    intent: "Clase grande: demasiadas responsabilidades (SRP sufre)."
+    signals_mode: all
+    requires: [metric]
+    signals:
+      - kind: metric
+        metric: class_method_count
+        op: ">="
+        percentile: 0.95
+        population: classes
+      - kind: metric
+        metric: class_wmc
+        op: ">="
+        percentile: 0.95
+        population: classes
+    evidence: [path, class_name, class_method_count, class_wmc]
+    severity: high
+    confidence: medium_high
+
+  - id: DEAD_CODE
+    scope: file_or_component
+    intent: "Código no usado/no alcanzable: ruido y riesgo."
+    signals_mode: any
+    requires: [static]
+    signals:
+      - kind: static
+        metric: unused_symbols
+        op: ">="
+        value: 1
+    evidence: [path, unused_symbols, examples]
+    severity: medium
+    confidence: medium
+
+  - id: SHOTGUN_SURGERY
+    scope: repo_or_component
+    intent: "Un cambio lógico obliga a tocar muchos archivos/clases."
+    signals_mode: any
+    requires: [history]
+    signals:
+      - kind: history
+        metric: files_touched_per_change
+        op: ">="
+        value: 8
+        window_days: 180
+    evidence: [change_id, files_touched_per_change, files]
+    severity: high
+    confidence: medium
+
+  - id: DIVERGENT_CHANGE
+    scope: class_or_component
+    intent: "Entidad cambia por razones distintas (alta entropía de cambios)."
+    signals_mode: any
+    requires: [history]
+    signals:
+      - kind: history
+        metric: change_reason_entropy
+        op: ">="
+        value: 1.5
+        window_days: 180
+    evidence: [path, entity_name, change_reason_entropy]
+    severity: high
+    confidence: medium
+
+design_smells:
+  - id: BLOB
+    scope: class_or_component
+    intent: "Entidad que concentra lógica y orquesta todo (God Class)."
+    signals_mode: all
+    requires: [metric]
+    signals:
+      - kind: metric
+        metric: wmc
+        op: ">="
+        percentile: 0.95
+        population: classes
+      - kind: metric
+        metric: lcom
+        op: ">="
+        percentile: 0.95
+        population: classes
+    evidence: [path, class_name, wmc, lcom]
+    severity: high
+    confidence: medium
+
+  - id: SPAGHETTI_CODE
+    scope: file_or_component
+    intent: "Control-flow enredado; evolución dolorosa."
+    signals_mode: all
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: cyclomatic_complexity
+        op: ">="
+        percentile: 0.95
+        population: functions_or_methods
+      - kind: metric
+        metric: nesting_depth
+        op: ">="
+        percentile: 0.95
+        population: functions_or_methods
+    evidence: [path, cc, nesting_depth]
+    severity: high
+    confidence: medium
+
+  - id: FUNCTIONAL_DECOMPOSITION
+    scope: component
+    intent: "OO ‘de cartón’: objetos anémicos y funciones sueltas."
+    signals_mode: any
+    requires: [metric, semantic]
+    signals:
+      - kind: metric
+        metric: data_class_ratio
+        op: ">="
+        value: 0.30
+    evidence: [component, data_class_ratio]
+    severity: medium_high
+    confidence: low_medium
+
+  - id: SWISS_ARMY_KNIFE
+    scope: class_or_component
+    intent: "Interfaz/abstracción que quiere servir a demasiados clientes."
+    signals_mode: any
+    requires: [metric, semantic]
+    signals:
+      - kind: metric
+        metric: public_api_size
+        op: ">="
+        percentile: 0.95
+        population: types
+    evidence: [path, entity_name, public_api_size]
+    severity: medium_high
+    confidence: low_medium
+
+  - id: UNNECESSARY_ABSTRACTION
+    scope: class
+    intent: "Abstracción sin beneficio real."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: usage_count
+        op: "<="
+        value: 1
+    evidence: [path, class_name, usage_count]
+    severity: medium
+    confidence: medium
+
+  - id: IMPERATIVE_ABSTRACTION
+    scope: class
+    intent: "Abstracción con lógica que debería vivir en concretos."
+    signals_mode: any
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: abstract_has_logic_ratio
+        op: ">="
+        value: 0.30
+    evidence: [path, class_name, abstract_has_logic_ratio]
+    severity: medium
+    confidence: low_medium
+
+  - id: MULTIFACETED_ABSTRACTION
+    scope: class
+    intent: "Abstracción con varias responsabilidades."
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: topic_entropy
+        op: ">="
+        value: 1.2
+    evidence: [path, class_name, topic_entropy, topics]
+    severity: medium_high
+    confidence: low
+
+  - id: UNUTILIZED_ABSTRACTION
+    scope: class
+    intent: "Abstracción casi no usada."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: usage_count
+        op: "=="
+        value: 0
+    evidence: [path, class_name, usage_count]
+    severity: medium
+    confidence: medium
+
+  - id: DUPLICATE_ABSTRACTION
+    scope: component
+    intent: "Abstracciones paralelas que modelan lo mismo."
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: api_overlap
+        op: ">="
+        value: 0.70
+    evidence: [entity_a, entity_b, api_overlap]
+    severity: medium_high
+    confidence: low
+
+  - id: DEFICIENT_ENCAPSULATION
+    scope: class
+    intent: "Exposición excesiva de estado/detalles internos."
+    signals_mode: any
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: public_field_ratio
+        op: ">="
+        value: 0.20
+    evidence: [path, class_name, public_field_ratio]
+    severity: medium_high
+    confidence: medium
+
+  - id: UNEXPLOITED_ENCAPSULATION
+    scope: class
+    intent: "Encapsulación disponible pero no usada."
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: direct_field_access_ratio
+        op: ">="
+        value: 0.30
+    evidence: [path, class_name, direct_field_access_ratio]
+    severity: medium
+    confidence: low_medium
+
+  - id: BROKEN_MODULARIZATION
+    scope: component
+    intent: "Límites rotos: responsabilidades cruzadas."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: cross_module_dependencies
+        op: ">="
+        percentile: 0.95
+        population: components
+    evidence: [component, cross_module_dependencies]
+    severity: high
+    confidence: medium
+
+  - id: INSUFFICIENT_MODULARIZATION
+    scope: component
+    intent: "Un módulo concentra demasiado; falta partición."
+    signals_mode: any
+    requires: [metric]
+    signals:
+      - kind: metric
+        metric: component_size
+        op: ">="
+        percentile: 0.95
+        population: components
+    evidence: [component, component_size]
+    severity: high
+    confidence: medium
+
+  - id: HUBLIKE_MODULARIZATION
+    scope: component
+    intent: "Módulo hub: cuello de botella."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: degree_centrality
+        op: ">="
+        percentile: 0.95
+        population: components
+    evidence: [component, degree_centrality]
+    severity: high
+    confidence: medium
+
+  - id: CYCLICALLY_DEPENDENT_MODULARIZATION
+    scope: component
+    intent: "Ciclos entre módulos."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: dependency_cycles
+        op: ">="
+        value: 1
+    evidence: [cycle_nodes, dependency_cycles]
+    severity: high
+    confidence: high
+
+  - id: WIDE_HIERARCHY
+    scope: inheritance_tree
+    intent: "Jerarquía demasiado ancha."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: children_per_node
+        op: ">="
+        percentile: 0.95
+        population: inheritance_nodes
+    evidence: [root_type, children_per_node]
+    severity: medium
+    confidence: medium
+
+  - id: DEEP_HIERARCHY
+    scope: inheritance_tree
+    intent: "Jerarquía demasiado profunda."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: inheritance_depth
+        op: ">="
+        percentile: 0.95
+        population: inheritance_nodes
+    evidence: [leaf_type, inheritance_depth]
+    severity: medium
+    confidence: medium
+
+  - id: MULTIPATH_HIERARCHY
+    scope: inheritance_graph
+    intent: "Múltiples caminos de herencia hacia un ancestro."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: multiple_paths_count
+        op: ">="
+        value: 2
+    evidence: [type_name, multiple_paths_count]
+    severity: medium_high
+    confidence: medium
+
+  - id: CYCLIC_HIERARCHY
+    scope: inheritance_graph
+    intent: "Ciclo en herencia."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: inheritance_cycles
+        op: ">="
+        value: 1
+    evidence: [cycle_nodes, inheritance_cycles]
+    severity: high
+    confidence: high
+
+  - id: UNFACTORED_HIERARCHY
+    scope: inheritance_tree
+    intent: "Jerarquía que requiere refactor (duplicación/mala distribución)."
+    signals_mode: any
+    requires: [metric, semantic]
+    signals:
+      - kind: metric
+        metric: dup_across_subclasses
+        op: ">="
+        value: 0.25
+    evidence: [root_type, dup_across_subclasses]
+    severity: medium_high
+    confidence: low_medium
+
+  - id: REBELLIOUS_HIERARCHY
+    scope: inheritance_tree
+    intent: "Subtipos no respetan contrato del supertipo (LSP sufre)."
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: override_contract_violations
+        op: ">="
+        value: 1
+    evidence: [type_name, override_contract_violations]
+    severity: high
+    confidence: low
+
+  - id: MISSING_HIERARCHY
+    scope: inheritance_tree
+    intent: "Falta jerarquía donde hay variantes/duplicación."
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: type_similarity_clusters
+        op: ">="
+        value: 2
+    evidence: [cluster, examples]
+    severity: medium
+    confidence: low
+
+  - id: BROKEN_HIERARCHY
+    scope: inheritance_tree
+    intent: "Jerarquía rota semánticamente."
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: contract_breaking_overrides
+        op: ">="
+        value: 1
+    evidence: [type_name, contract_breaking_overrides]
+    severity: high
+    confidence: low
+
+architecture_smells:
+  - id: CYCLIC_DEPENDENCY
+    scope: architecture_component
+    intent: "Ciclos entre componentes."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: dependency_cycles
+        op: ">="
+        value: 1
+    evidence: [cycle_nodes, dependency_cycles]
+    severity: high
+    confidence: high
+
+  - id: UNSTABLE_DEPENDENCY
+    scope: architecture_component
+    intent: "Componente estable depende de uno menos estable."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: stable_depends_on_unstable
+        op: "=="
+        value: true
+    evidence: [component, instability, depends_on]
+    severity: high
+    confidence: medium
+
+  - id: AMBIGUOUS_INTERFACE
+    scope: architecture_component
+    intent: "Un único punto de entrada demasiado genérico."
+    signals_mode: all
+    requires: [metric, semantic]
+    signals:
+      - kind: metric
+        metric: entrypoint_count
+        op: "=="
+        value: 1
+      - kind: metric
+        metric: entrypoint_api_size
+        op: ">="
+        percentile: 0.95
+        population: components
+    evidence: [component, entrypoint, entrypoint_api_size]
+    severity: medium_high
+    confidence: medium
+
+  - id: GOD_COMPONENT
+    scope: architecture_component
+    intent: "Componente excesivamente grande."
+    signals_mode: any
+    requires: [metric, graph]
+    signals:
+      - kind: metric
+        metric: component_size
+        op: ">="
+        percentile: 0.95
+        population: components
+    evidence: [component, component_size]
+    severity: high
+    confidence: medium
+
+  - id: FEATURE_CONCENTRATION
+    scope: architecture_component
+    intent: "Un componente realiza más de una concern/feature."
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: feature_count_in_component
+        op: ">="
+        value: 2
+    evidence: [component, feature_count_in_component, features]
+    severity: medium_high
+    confidence: low
+
+  - id: SCATTERED_FUNCTIONALITY
+    scope: architecture
+    intent: "Una feature repartida por múltiples componentes."
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: feature_scatter
+        op: ">="
+        percentile: 0.95
+        population: features
+    evidence: [feature, feature_scatter, components]
+    severity: high
+    confidence: low_medium
+
+  - id: DENSE_STRUCTURE
+    scope: architecture
+    intent: "Dependencias densas sin estructura clara."
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: graph_density
+        op: ">="
+        percentile: 0.95
+        population: architecture_graphs
+    evidence: [graph_density]
+    severity: medium_high
+    confidence: medium
