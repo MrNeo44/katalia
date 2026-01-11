@@ -3,14 +3,8 @@ name: "KatalIA Smell Catalog (Runtime)"
 version: "2026.01c"
 
 defaults:
-  # Si un smell no define signals_mode, el motor usa este.
   signals_mode: any  # any=OR, all=AND
-
-  # Convención: si un signal usa percentile, el motor calcula el umbral
-  # sobre la población indicada (population).
   percentile_method: linear_interpolation
-
-  # Ventanas por defecto para smells históricos (si el extractor lo soporta)
   history_window_days: 180
 
 code_smells:
@@ -21,11 +15,11 @@ code_smells:
     requires: [clone]
     signals:
       - kind: clone
-        metric: clone_ratio          # 0..1
+        metric: clone_ratio
         op: ">="
         value: 0.10
       - kind: clone
-        metric: dup_lines            # líneas duplicadas absolutas
+        metric: dup_lines
         op: ">="
         value: 30
     evidence: [path, clone_ratio, dup_lines, dup_blocks]
@@ -412,65 +406,6 @@ design_smells:
     severity: medium
     confidence: low_medium
 
-  - id: BROKEN_MODULARIZATION
-    scope: component
-    intent: "Límites rotos: responsabilidades cruzadas."
-    signals_mode: any
-    requires: [graph]
-    signals:
-      - kind: graph
-        metric: cross_module_dependencies
-        op: ">="
-        percentile: 0.95
-        population: components
-    evidence: [component, cross_module_dependencies]
-    severity: high
-    confidence: medium
-
-  - id: INSUFFICIENT_MODULARIZATION
-    scope: component
-    intent: "Un módulo concentra demasiado; falta partición."
-    signals_mode: any
-    requires: [metric]
-    signals:
-      - kind: metric
-        metric: component_size
-        op: ">="
-        percentile: 0.95
-        population: components
-    evidence: [component, component_size]
-    severity: high
-    confidence: medium
-
-  - id: HUBLIKE_MODULARIZATION
-    scope: component
-    intent: "Módulo hub: cuello de botella."
-    signals_mode: any
-    requires: [graph]
-    signals:
-      - kind: graph
-        metric: degree_centrality
-        op: ">="
-        percentile: 0.95
-        population: components
-    evidence: [component, degree_centrality]
-    severity: high
-    confidence: medium
-
-  - id: CYCLICALLY_DEPENDENT_MODULARIZATION
-    scope: component
-    intent: "Ciclos entre módulos."
-    signals_mode: any
-    requires: [graph]
-    signals:
-      - kind: graph
-        metric: dependency_cycles
-        op: ">="
-        value: 1
-    evidence: [cycle_nodes, dependency_cycles]
-    severity: high
-    confidence: high
-
   - id: WIDE_HIERARCHY
     scope: inheritance_tree
     intent: "Jerarquía demasiado ancha."
@@ -584,110 +519,3 @@ design_smells:
     evidence: [type_name, contract_breaking_overrides]
     severity: high
     confidence: low
-
-architecture_smells:
-  - id: CYCLIC_DEPENDENCY
-    scope: architecture_component
-    intent: "Ciclos entre componentes."
-    signals_mode: any
-    requires: [graph]
-    signals:
-      - kind: graph
-        metric: dependency_cycles
-        op: ">="
-        value: 1
-    evidence: [cycle_nodes, dependency_cycles]
-    severity: high
-    confidence: high
-
-  - id: UNSTABLE_DEPENDENCY
-    scope: architecture_component
-    intent: "Componente estable depende de uno menos estable."
-    signals_mode: any
-    requires: [graph]
-    signals:
-      - kind: graph
-        metric: stable_depends_on_unstable
-        op: "=="
-        value: true
-    evidence: [component, instability, depends_on]
-    severity: high
-    confidence: medium
-
-  - id: AMBIGUOUS_INTERFACE
-    scope: architecture_component
-    intent: "Un único punto de entrada demasiado genérico."
-    signals_mode: all
-    requires: [metric, semantic]
-    signals:
-      - kind: metric
-        metric: entrypoint_count
-        op: "=="
-        value: 1
-      - kind: metric
-        metric: entrypoint_api_size
-        op: ">="
-        percentile: 0.95
-        population: components
-    evidence: [component, entrypoint, entrypoint_api_size]
-    severity: medium_high
-    confidence: medium
-
-  - id: GOD_COMPONENT
-    scope: architecture_component
-    intent: "Componente excesivamente grande."
-    signals_mode: any
-    requires: [metric, graph]
-    signals:
-      - kind: metric
-        metric: component_size
-        op: ">="
-        percentile: 0.95
-        population: components
-    evidence: [component, component_size]
-    severity: high
-    confidence: medium
-
-  - id: FEATURE_CONCENTRATION
-    scope: architecture_component
-    intent: "Un componente realiza más de una concern/feature."
-    signals_mode: any
-    requires: [semantic]
-    signals:
-      - kind: semantic
-        metric: feature_count_in_component
-        op: ">="
-        value: 2
-    evidence: [component, feature_count_in_component, features]
-    severity: medium_high
-    confidence: low
-
-  - id: SCATTERED_FUNCTIONALITY
-    scope: architecture
-    intent: "Una feature repartida por múltiples componentes."
-    signals_mode: any
-    requires: [semantic]
-    signals:
-      - kind: semantic
-        metric: feature_scatter
-        op: ">="
-        percentile: 0.95
-        population: features
-    evidence: [feature, feature_scatter, components]
-    severity: high
-    confidence: low_medium
-
-  - id: DENSE_STRUCTURE
-    scope: architecture
-    intent: "Dependencias densas sin estructura clara."
-    signals_mode: any
-    requires: [graph]
-    signals:
-      - kind: graph
-        metric: graph_density
-        op: ">="
-        percentile: 0.95
-        population: architecture_graphs
-    evidence: [graph_density]
-    severity: medium_high
-    confidence: medium
