@@ -1,9 +1,5 @@
 from __future__ import annotations
-
-import argparse#!/usr/bin/env python3
-
-from __future__ import annotations
-
+import argparse
 import ast
 import argparse
 import hashlib
