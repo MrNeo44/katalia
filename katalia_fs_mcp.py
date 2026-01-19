@@ -19,10 +19,6 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from mcp.server.fastmcp import FastMCP
 
-# -----------------------------
-# Optional deps
-# -----------------------------
-# Radon (recommended)
 try:
     from radon.complexity import cc_visit
     from radon.metrics import mi_visit

@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import ast
 import argparse
 import hashlib
@@ -115,6 +116,13 @@ class FileMetrics:
 
     analyzed_at: str
     error: Optional[str] = None
+
+    # churn metrics (git history; used for refactor prioritization)
+    churn_commits: Optional[int] = None
+    churn_added: Optional[int] = None
+    churn_deleted: Optional[int] = None
+    churn_total: Optional[int] = None
+    churn_last_modified: Optional[str] = None
 
 
 @dataclass
@@ -354,7 +362,6 @@ def _max_nesting_depth(fn_node: ast.AST) -> int:
     Max block nesting depth inside a function/method.
     Count typical nesting statements; ignore nested defs/classes.
     """
-
     BLOCKS = (
         ast.If,
         ast.For,
@@ -391,18 +398,22 @@ def _stmt_token_count(stmt_src: str) -> int:
         toks = tokenize.generate_tokens(io.StringIO(stmt_src).readline)
         count = 0
         for t in toks:
-            if t.type in (tokenize.ENCODING, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT):
+            if t.type in (
+                tokenize.ENCODING,
+                tokenize.NL,
+                tokenize.NEWLINE,
+                tokenize.INDENT,
+                tokenize.DEDENT,
+                tokenize.COMMENT,
+            ):
                 continue
             count += 1
         return int(count)
     except Exception:
-        # fallback: rough split
         return int(len(re.findall(r"\w+|[^\s\w]", stmt_src)))
 
 
 def _max_stmt_tokens_in_node(code: str, node: ast.AST) -> int:
-    max_tokens = 0
-
     class V(ast.NodeVisitor):
         def __init__(self) -> None:
             self.max_tokens = 0
@@ -424,14 +435,10 @@ def _max_stmt_tokens_in_node(code: str, node: ast.AST) -> int:
 
     v = V()
     v.visit(node)
-    max_tokens = v.max_tokens
-    return int(max_tokens)
+    return int(v.max_tokens)
 
 
 def _match_without_wildcard_in_node(node: ast.AST) -> bool:
-    found = False
-    missing = False
-
     class V(ast.NodeVisitor):
         def __init__(self) -> None:
             self.missing = False
@@ -450,7 +457,6 @@ def _match_without_wildcard_in_node(node: ast.AST) -> bool:
                     has_wild = True
             if not has_wild:
                 self.missing = True
-            # keep searching
             self.generic_visit(n)
 
         def visit_FunctionDef(self, n: ast.FunctionDef) -> None:
@@ -464,15 +470,14 @@ def _match_without_wildcard_in_node(node: ast.AST) -> bool:
 
     v = V()
     v.visit(node)
-    found = v.found
-    missing = v.missing
-    return bool(found and missing)
+    return bool(v.found and v.missing)
 
 
 def _empty_except_handlers_in_node(node: ast.AST) -> int:
     """
     Count except handlers whose body is empty-ish (pass or ellipsis only).
     """
+
     class V(ast.NodeVisitor):
         def __init__(self) -> None:
             self.count = 0
@@ -573,10 +578,17 @@ def _count_sloc_range(lines: List[str], start: int, end: int) -> int:
 
 
 def _infer_component_from_path(rel_path: str) -> str:
+    """
+    Heurística de componente:
+    - por defecto: carpeta top-level
+    - si el repo usa src/, lib/, app/: usamos la segunda carpeta como componente real
+      ej: src/foo/bar.py -> foo
+    """
     parts = rel_path.replace("\\", "/").split("/")
     if not parts:
         return "."
-    # choose top-level folder as component; fallback "."
+    if parts[0] in {"src", "lib", "app"} and len(parts) > 2:
+        return parts[1]
     return parts[0] if len(parts) > 1 else "."
 
 
@@ -621,7 +633,6 @@ def _ruff_unused_symbols(repo: Path, rel_path: str) -> Optional[int]:
         if res.returncode == 0:
             return 0
         out = (res.stdout or "") + "\n" + (res.stderr or "")
-        # rough count: lines that look like diagnostics "path:line:col ..."
         cnt = 0
         for ln in out.splitlines():
             if ":" in ln and ("F401" in ln or "F841" in ln):
@@ -717,7 +728,6 @@ def _class_field_access_sets(class_node: ast.ClassDef) -> Tuple[Dict[str, set], 
     method_fields: Dict[str, set] = {}
     getset = {"getter": 0, "setter": 0, "methods": 0}
 
-    # class-level assignments: x = ...
     for item in class_node.body:
         if isinstance(item, ast.Assign):
             for t in item.targets:
@@ -781,7 +791,6 @@ def _lcom4_from_method_fields(method_fields: Dict[str, set]) -> float:
     if len(methods) <= 1:
         return 1.0
 
-    # build adjacency
     adj: Dict[str, set] = {m: set() for m in methods}
     for i, m1 in enumerate(methods):
         f1 = method_fields.get(m1, set())
@@ -791,7 +800,6 @@ def _lcom4_from_method_fields(method_fields: Dict[str, set]) -> float:
                 adj[m1].add(m2)
                 adj[m2].add(m1)
 
-    # count connected components
     seen = set()
     comps = 0
     for m in methods:
@@ -827,16 +835,17 @@ def _analyze_entities(code: str, use_radon: bool) -> Dict[str, Any]:
         try:
             blocks = cc_visit(code) or []
             for b in blocks:
-                # b has attributes: name, lineno, complexity
                 nm = getattr(b, "name", None)
                 ln = getattr(b, "lineno", None)
                 cx = getattr(b, "complexity", None)
+                cls = getattr(b, "classname", None)
                 if isinstance(nm, str) and isinstance(ln, int) and isinstance(cx, (int, float)):
                     radon_cc_by_name_line[(nm, ln)] = float(cx)
+                    if cls:
+                        radon_cc_by_name_line[(f"{cls}.{nm}", ln)] = float(cx)
         except Exception:
             radon_cc_by_name_line = {}
 
-    # file-level AST extras
     magic_count, magic_examples = _magic_number_stats(tree)
     max_ident, ident_examples = _max_identifier_length_in_tree(tree)
 
@@ -880,7 +889,6 @@ def _analyze_entities(code: str, use_radon: bool) -> Dict[str, Any]:
             )
 
         def visit_AsyncFunctionDef(self, n: ast.AST) -> None:
-            # treat similarly
             start = int(getattr(n, "lineno", 1))
             end = int(getattr(n, "end_lineno", start))
             nm = getattr(n, "name", "async_fn")
@@ -924,7 +932,6 @@ def _analyze_entities(code: str, use_radon: bool) -> Dict[str, Any]:
             end = int(getattr(n, "end_lineno", start))
             loc = int(max(1, end - start + 1))
 
-            # methods + WMC proxy (sum method cc)
             method_nodes: List[ast.AST] = []
             for item in n.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -940,7 +947,11 @@ def _analyze_entities(code: str, use_radon: bool) -> Dict[str, Any]:
                 mstart = int(getattr(m, "lineno", 1))
                 mend = int(getattr(m, "end_lineno", mstart))
                 msloc = _count_sloc_range(lines, mstart, mend)
-                mcc = radon_cc_by_name_line.get((mname, mstart), _cyclomatic_proxy(m))
+                # robust: Radon may store methods as "method" OR "Class.method"
+                mcc = radon_cc_by_name_line.get(
+                    (mname, mstart),
+                    radon_cc_by_name_line.get((f"{n.name}.{mname}", mstart), _cyclomatic_proxy(m)),
+                )
                 nesting = _max_nesting_depth(m)
                 bool_ops = _count_bool_ops(m)
                 max_stmt_tokens = _max_stmt_tokens_in_node(code, m)
@@ -978,11 +989,9 @@ def _analyze_entities(code: str, use_radon: bool) -> Dict[str, Any]:
                     }
                 )
 
-            # cohesion proxy: LCOM4
             method_fields, all_fields, getset = _class_field_access_sets(n)
             lcom4 = _lcom4_from_method_fields(method_fields)
 
-            # public_field_ratio heuristic (naming)
             public_fields = [f for f in all_fields if isinstance(f, str) and not f.startswith("_")]
             public_field_ratio = (len(public_fields) / max(1, len(all_fields))) if all_fields else 0.0
 
@@ -992,7 +1001,6 @@ def _analyze_entities(code: str, use_radon: bool) -> Dict[str, Any]:
                 else 0.0
             )
 
-            # overridable call in ctor
             ov, call_sites = _overridable_calls_in_init(n, code)
 
             classes.append(
@@ -1010,18 +1018,14 @@ def _analyze_entities(code: str, use_radon: bool) -> Dict[str, Any]:
                     "getter_setter_ratio": float(round(float(getter_setter_ratio), 4)),
                     "overridable_call_in_constructor": bool(ov),
                     "overridable_call_sites": call_sites,
-                    # convenience aggregates for smells
                     "max_method_nesting_depth": int(max_m_nesting),
                 }
             )
 
-            # Also push method details into global functions list (so smells can search uniformly)
             functions.extend(methods_detail)
 
-            # do not descend into nested classes here; but allow nested? keep simple
             for item in n.body:
                 if isinstance(item, ast.ClassDef):
-                    # nested class: treat as separate (rare)
                     self.visit_ClassDef(item)
 
     ModuleVisitor().visit(tree)
@@ -1032,6 +1036,8 @@ def _analyze_entities(code: str, use_radon: bool) -> Dict[str, Any]:
         "file_examples": {
             "magic_numbers": magic_examples,
             "long_identifiers": ident_examples,
+            "magic_number_count": magic_count,
+            "max_identifier_length": max_ident,
         },
     }
 
@@ -1126,11 +1132,56 @@ class _AstStatsVisitor(ast.NodeVisitor):
 def _ast_metrics_for_code(code: str) -> Dict[str, Any]:
     try:
         tree = ast.parse(code)
+
         v = _AstStatsVisitor()
         v.visit(tree)
+
+        # Improved stmt_count: count statements inside top-level functions/methods too,
+        # but don't descend into nested defs/classes inside those functions.
+        class _StmtV(ast.NodeVisitor):
+            def __init__(self) -> None:
+                self.count = 0
+                self.func_depth = 0
+
+            def generic_visit(self, node: ast.AST) -> Any:
+                if isinstance(node, ast.stmt):
+                    self.count += 1
+                return super().generic_visit(node)
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
+                self.count += 1  # the def stmt itself
+                if self.func_depth >= 1:
+                    return None
+                self.func_depth += 1
+                for ch in node.body:
+                    self.visit(ch)
+                self.func_depth -= 1
+                return None
+
+            def visit_AsyncFunctionDef(self, node: ast.AST) -> Any:
+                self.count += 1
+                if self.func_depth >= 1:
+                    return None
+                self.func_depth += 1
+                for ch in getattr(node, "body", []) or []:
+                    self.visit(ch)
+                self.func_depth -= 1
+                return None
+
+            def visit_ClassDef(self, node: ast.ClassDef) -> Any:
+                self.count += 1
+                if self.func_depth >= 1:
+                    return None
+                for ch in node.body:
+                    self.visit(ch)
+                return None
+
+        sv = _StmtV()
+        sv.visit(tree)
+
         return {
             "ast_ok": True,
-            "stmt_count": int(v.stmt_count),
+            "stmt_count": int(sv.count),
             "n_classes": int(v.n_classes),
             "n_functions": int(v.n_functions),
             "n_methods": int(v.n_methods),
@@ -1184,8 +1235,10 @@ def _compute_metrics_for_code(code: str, require_radon: bool, use_radon: bool) -
         lines = code.splitlines()
         loc = len(lines)
         blank = sum(1 for x in lines if not x.strip())
+        # comment-only lines (rough)
         comments = sum(1 for x in lines if x.strip().startswith("#"))
-        sloc = loc - blank
+        # improved fallback: exclude comment-only from sloc
+        sloc = max(0, loc - blank - comments)
 
         return {
             "loc": loc,
@@ -1198,23 +1251,58 @@ def _compute_metrics_for_code(code: str, require_radon: bool, use_radon: bool) -
             "cc_avg": 0.0,
             "cc_max": float(astm.get("ast_cyc_max", 0.0)),
             "cc_blocks": 0,
-            **{k: astm[k] for k in [
-                "ast_ok",
-                "stmt_count",
-                "n_classes",
-                "n_functions",
-                "n_methods",
-                "max_class_methods",
-                "max_class_wmc",
-                "ast_cyc_sum",
-                "ast_cyc_max",
-            ]},
+            **{
+                k: astm[k]
+                for k in [
+                    "ast_ok",
+                    "stmt_count",
+                    "n_classes",
+                    "n_functions",
+                    "n_methods",
+                    "max_class_methods",
+                    "max_class_wmc",
+                    "ast_cyc_sum",
+                    "ast_cyc_max",
+                ]
+            },
         }
 
     raw = raw_analyze(code)
     mi = float(mi_visit(code, multi=False))
-    blocks = cc_visit(code)
-    ccs = [b.complexity for b in blocks] if blocks else []
+
+    blocks = cc_visit(code) or []
+
+    # Keep CC only for top-level funcs + class methods (exclude nested defs)
+    wanted: set[tuple[str, int]] = set()
+    try:
+        tree = ast.parse(code)
+        for n in tree.body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                wanted.add((n.name, int(getattr(n, "lineno", 0) or 0)))
+            elif isinstance(n, ast.ClassDef):
+                for m in n.body:
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        ln = int(getattr(m, "lineno", 0) or 0)
+                        wanted.add((m.name, ln))
+                        wanted.add((f"{n.name}.{m.name}", ln))  # radon sometimes uses Class.method
+    except Exception:
+        wanted = set()
+
+    ccs: List[float] = []
+    for b in blocks:
+        nm = getattr(b, "name", None)
+        ln = int(getattr(b, "lineno", 0) or 0)
+        cx = float(getattr(b, "complexity", 0.0) or 0.0)
+        cls = getattr(b, "classname", None)
+
+        key1 = (str(nm), ln) if nm else None
+        key2 = (f"{cls}.{nm}", ln) if (cls and nm) else None
+
+        if wanted:
+            if (key1 and key1 in wanted) or (key2 and key2 in wanted):
+                ccs.append(cx)
+        else:
+            ccs.append(cx)
 
     cc_sum = float(sum(ccs)) if ccs else 0.0
     cc_max = float(max(ccs)) if ccs else 0.0
@@ -1231,17 +1319,20 @@ def _compute_metrics_for_code(code: str, require_radon: bool, use_radon: bool) -
         "cc_avg": round(cc_avg, 2),
         "cc_max": round(cc_max, 2),
         "cc_blocks": int(len(ccs)),
-        **{k: astm[k] for k in [
-            "ast_ok",
-            "stmt_count",
-            "n_classes",
-            "n_functions",
-            "n_methods",
-            "max_class_methods",
-            "max_class_wmc",
-            "ast_cyc_sum",
-            "ast_cyc_max",
-        ]},
+        **{
+            k: astm[k]
+            for k in [
+                "ast_ok",
+                "stmt_count",
+                "n_classes",
+                "n_functions",
+                "n_methods",
+                "max_class_methods",
+                "max_class_wmc",
+                "ast_cyc_sum",
+                "ast_cyc_max",
+            ]
+        },
     }
 
 
@@ -1271,7 +1362,6 @@ def _compute_file_analysis(
         ast_cyc_max=0.0,
     )
 
-    # smell aggregates defaults
     smell_defaults = dict(
         max_nesting_depth=0,
         bool_op_count=0,
@@ -1293,8 +1383,16 @@ def _compute_file_analysis(
         if not f.exists() or f.suffix != ".py":
             fm = FileMetrics(
                 path=rel_norm,
-                loc=0, sloc=0, comments=0, multi=0, blank=0,
-                cc_sum=0.0, cc_avg=0.0, cc_max=0.0, cc_blocks=0, mi=None,
+                loc=0,
+                sloc=0,
+                comments=0,
+                multi=0,
+                blank=0,
+                cc_sum=0.0,
+                cc_avg=0.0,
+                cc_max=0.0,
+                cc_blocks=0,
+                mi=None,
                 analyzed_at=analyzed_at,
                 error="file_not_found_or_not_py",
                 **ast_defaults,
@@ -1305,8 +1403,16 @@ def _compute_file_analysis(
         if _is_ignored(repo, f, include_tests):
             fm = FileMetrics(
                 path=rel_norm,
-                loc=0, sloc=0, comments=0, multi=0, blank=0,
-                cc_sum=0.0, cc_avg=0.0, cc_max=0.0, cc_blocks=0, mi=None,
+                loc=0,
+                sloc=0,
+                comments=0,
+                multi=0,
+                blank=0,
+                cc_sum=0.0,
+                cc_avg=0.0,
+                cc_max=0.0,
+                cc_blocks=0,
+                mi=None,
                 analyzed_at=analyzed_at,
                 error="ignored",
                 **ast_defaults,
@@ -1317,8 +1423,16 @@ def _compute_file_analysis(
         if max_file_bytes > 0 and f.stat().st_size > max_file_bytes:
             fm = FileMetrics(
                 path=rel_norm,
-                loc=0, sloc=0, comments=0, multi=0, blank=0,
-                cc_sum=0.0, cc_avg=0.0, cc_max=0.0, cc_blocks=0, mi=None,
+                loc=0,
+                sloc=0,
+                comments=0,
+                multi=0,
+                blank=0,
+                cc_sum=0.0,
+                cc_avg=0.0,
+                cc_max=0.0,
+                cc_blocks=0,
+                mi=None,
                 analyzed_at=analyzed_at,
                 error="file_too_large",
                 **ast_defaults,
@@ -1332,7 +1446,6 @@ def _compute_file_analysis(
         if compute_entities:
             entities = _analyze_entities(code, use_radon=use_radon and RADON_AVAILABLE)
 
-        # aggregates for smell thresholds
         max_nesting = 0
         bool_ops_total = 0
         max_stmt_tokens = 0
@@ -1350,8 +1463,6 @@ def _compute_file_analysis(
         for cl in entities.get("classes", []) or []:
             overridable_any = bool(overridable_any or bool(cl.get("overridable_call_in_constructor", False)))
 
-        # file-level AST extras (magic numbers, id length) are in entities["file_examples"] already,
-        # but we also store counts in FileMetrics.
         try:
             tree = ast.parse(code)
             magic_count, _magic_examples = _magic_number_stats(tree)
@@ -1404,8 +1515,16 @@ def _compute_file_analysis(
     except Exception as e:
         fm = FileMetrics(
             path=rel_norm,
-            loc=0, sloc=0, comments=0, multi=0, blank=0,
-            cc_sum=0.0, cc_avg=0.0, cc_max=0.0, cc_blocks=0, mi=None,
+            loc=0,
+            sloc=0,
+            comments=0,
+            multi=0,
+            blank=0,
+            cc_sum=0.0,
+            cc_avg=0.0,
+            cc_max=0.0,
+            cc_blocks=0,
+            mi=None,
             analyzed_at=analyzed_at,
             error=f"{type(e).__name__}: {e}",
             **ast_defaults,
@@ -1422,7 +1541,6 @@ def _summary_view(m: Dict[str, Any]) -> Dict[str, Any]:
         "cc_max": m.get("cc_max", 0),
         "cc_sum": m.get("cc_sum", 0.0),
         "cc_blocks": m.get("cc_blocks", 0),
-        # AST explainability
         "ast_ok": m.get("ast_ok", None),
         "stmt_count": m.get("stmt_count", 0),
         "n_classes": m.get("n_classes", 0),
@@ -1432,7 +1550,6 @@ def _summary_view(m: Dict[str, Any]) -> Dict[str, Any]:
         "max_class_wmc": m.get("max_class_wmc", 0.0),
         "ast_cyc_sum": m.get("ast_cyc_sum", 0.0),
         "ast_cyc_max": m.get("ast_cyc_max", 0.0),
-        # smell-ready aggregates
         "max_nesting_depth": m.get("max_nesting_depth", 0),
         "bool_op_count": m.get("bool_op_count", 0),
         "max_stmt_tokens": m.get("max_stmt_tokens", 0),
@@ -1441,11 +1558,16 @@ def _summary_view(m: Dict[str, Any]) -> Dict[str, Any]:
         "empty_except_handlers": m.get("empty_except_handlers", 0),
         "max_identifier_length": m.get("max_identifier_length", 0),
         "overridable_call_in_constructor": m.get("overridable_call_in_constructor", False),
-        # clone + lint (optional)
         "clone_ratio": m.get("clone_ratio", None),
         "dup_lines": m.get("dup_lines", None),
         "dup_blocks": m.get("dup_blocks", None),
         "unused_symbols": m.get("unused_symbols", None),
+        # churn (refactor prioritization)
+        "churn_commits": m.get("churn_commits", None),
+        "churn_added": m.get("churn_added", None),
+        "churn_deleted": m.get("churn_deleted", None),
+        "churn_total": m.get("churn_total", None),
+        "churn_last_modified": m.get("churn_last_modified", None),
         "error": m.get("error", None),
     }
 
@@ -1483,7 +1605,6 @@ def _normalized_code_lines_for_clone(code: str) -> List[str]:
                 continue
             out_lines[-1].append(txt)
     except Exception:
-        # fallback: whitespace normalized
         return [re.sub(r"\s+", " ", ln.strip()) for ln in code.splitlines() if ln.strip()]
 
     normalized = [" ".join(x) for x in out_lines if x]
@@ -1506,7 +1627,6 @@ def _compute_clone_metrics_for_repo(repo: Path, include_tests: bool, min_block_l
         norm_lines_by_file[rel] = nl
         sloc_by_file[rel] = sum(1 for x in nl if x.strip())
 
-    # map hash -> occurrences
     occ: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
     for rel, lines in norm_lines_by_file.items():
         if len(lines) < min_block_lines:
@@ -1522,7 +1642,6 @@ def _compute_clone_metrics_for_repo(repo: Path, include_tests: bool, min_block_l
     for h, positions in occ.items():
         if len(positions) <= 1:
             continue
-        # duplicate block across >=2 places
         for rel, i in positions:
             dup_blocks_count[rel] += 1
             for ln in range(i, i + min_block_lines):
@@ -1563,7 +1682,7 @@ def _compute_import_graph_metrics(repo: Path, include_tests: bool) -> Dict[str, 
         existing_components.add(_infer_component_from_path(rel))
 
     edges: set = set()
-    comp_public_api_size: Counter[str] = Counter()  # heuristic
+    comp_public_api_size: Counter[str] = Counter()
     comp_entrypoints: Counter[str] = Counter()
 
     for p in py_files:
@@ -1579,7 +1698,6 @@ def _compute_import_graph_metrics(repo: Path, include_tests: bool) -> Dict[str, 
             if t in existing_components and t != comp:
                 edges.add((comp, t))
 
-        # API heuristic: count public defs/classes in module
         pub = 0
         for n in tree.body:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -1592,12 +1710,10 @@ def _compute_import_graph_metrics(repo: Path, include_tests: bool) -> Dict[str, 
     n = len(comps)
     edge_list = sorted(list(edges))
 
-    # density
     density = 0.0
     if n > 1:
         density = float(len(edges)) / float(n * (n - 1))
 
-    # fanin/fanout
     fanout: Counter[str] = Counter()
     fanin: Counter[str] = Counter()
     for a, b in edges:
@@ -1615,7 +1731,7 @@ def _compute_import_graph_metrics(repo: Path, include_tests: bool) -> Dict[str, 
     for a, b in edges:
         ia = instability.get(a, 0.0)
         ib = instability.get(b, 0.0)
-        if ia < ib:  # stable-ish depending on more unstable
+        if ia < ib:
             stable_depends_on_unstable.append({"from": a, "to": b, "instability_from": ia, "instability_to": ib})
 
     cycles: List[List[str]] = []
@@ -1627,13 +1743,11 @@ def _compute_import_graph_metrics(repo: Path, include_tests: bool) -> Dict[str, 
             cycles = [list(c) for c in nx.simple_cycles(G)]
         except Exception:
             cycles = []
-        # entrypoint heuristic: max incoming
         if comps:
             top_in = max(comps, key=lambda c: fanin.get(c, 0))
             comp_entrypoints[top_in] += 1
         degree_centrality = nx.degree_centrality(G)
     else:
-        # minimal cycle detection (DFS)
         graph: Dict[str, List[str]] = {c: [] for c in comps}
         for a, b in edge_list:
             graph[a].append(b)
@@ -1650,7 +1764,6 @@ def _compute_import_graph_metrics(repo: Path, include_tests: bool) -> Dict[str, 
                 if v not in visited:
                     dfs(v)
                 elif v in onstack:
-                    # cycle found
                     try:
                         idx = stack.index(v)
                         cyc = stack[idx:] + [v]
@@ -1681,7 +1794,7 @@ def _compute_import_graph_metrics(repo: Path, include_tests: bool) -> Dict[str, 
         "fanout": {k: int(v) for k, v in fanout.items()},
         "instability": instability,
         "stable_depends_on_unstable": stable_depends_on_unstable,
-        "dependency_cycles": {"count": len(cycles), "cycles": cycles[:50]},  # cap
+        "dependency_cycles": {"count": len(cycles), "cycles": cycles[:50]},
         "degree_centrality": degree_centrality,
         "entrypoint_count": entrypoint_count,
         "entrypoint": entrypoint,
@@ -1691,7 +1804,7 @@ def _compute_import_graph_metrics(repo: Path, include_tests: bool) -> Dict[str, 
 
 
 # -----------------------------
-# Repo-level: git history (shotgun/divergent + feature scatter)
+# Repo-level: git history (shotgun/divergent + feature scatter) + churn
 # -----------------------------
 ISSUE_RE = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
 CONVENTIONAL_RE = re.compile(r"^(feat|fix|refactor|chore|docs|test|build|ci|perf|style|revert)(\(.+\))?:", re.IGNORECASE)
@@ -1703,6 +1816,139 @@ def _git_available(repo: Path) -> bool:
         return res.returncode == 0 and "true" in (res.stdout or "").lower()
     except Exception:
         return False
+
+
+def _git_head(repo: Path) -> Optional[str]:
+    try:
+        res = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=False)
+        if res.returncode != 0:
+            return None
+        return (res.stdout or "").strip() or None
+    except Exception:
+        return None
+
+
+def _normalize_git_numstat_path(p: str) -> str:
+    """
+    Normalize weird rename formats in git numstat:
+      - "old => new"
+      - "src/{old => new}/file.py"
+    Returns the "new" path as best effort.
+    """
+    s = (p or "").strip()
+    if not s:
+        return s
+
+    brace_re = re.compile(r"\{([^{}]*?)\s*=>\s*([^{}]*?)\}")
+    while True:
+        m = brace_re.search(s)
+        if not m:
+            break
+        s = s[: m.start()] + (m.group(2) or "") + s[m.end() :]
+
+    if "=>" in s:
+        s = s.split("=>")[-1].strip()
+
+    return s.replace("\\", "/").strip()
+
+
+def _compute_churn_metrics_for_repo(
+    repo: Path,
+    include_tests: bool,
+    max_commits: int = 5000,
+) -> Dict[str, Any]:
+    """
+    Per-file churn from git history (lines added/deleted + commits touched + last modified).
+
+    churn_total = churn_added + churn_deleted
+    last_modified = most recent commit date that touched the file (ISO string)
+    """
+    if not _git_available(repo):
+        return {"git": False, "error": "not_a_git_repo_or_git_missing", "commits_scanned": 0, "files": {}, "head": None}
+
+    head = _git_head(repo)
+
+    cmd = [
+        "git",
+        "-C",
+        str(repo),
+        "log",
+        f"-n{int(max_commits)}",
+        "--no-merges",
+        "--numstat",
+        "--pretty=format:%H%x1f%ad",
+        "--date=iso-strict",
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if res.returncode != 0:
+        return {
+            "git": True,
+            "error": "git_log_failed",
+            "stderr": (res.stderr or "")[:2000],
+            "commits_scanned": 0,
+            "files": {},
+            "head": head,
+        }
+
+    files: Dict[str, Dict[str, Any]] = {}
+    cur_date: Optional[str] = None
+    commits_scanned = 0
+
+    for ln in (res.stdout or "").splitlines():
+        if "\x1f" in ln:
+            commits_scanned += 1
+            parts = ln.split("\x1f")
+            cur_date = parts[1] if len(parts) > 1 else None
+            continue
+
+        if not ln.strip():
+            continue
+
+        # numstat format: <added>\t<deleted>\t<path>
+        parts = ln.split("\t")
+        if len(parts) < 3:
+            continue
+
+        add_s, del_s, path_s = parts[0].strip(), parts[1].strip(), "\t".join(parts[2:]).strip()
+        path_s = _normalize_git_numstat_path(path_s)
+
+        if not path_s.endswith(".py"):
+            continue
+
+        # ignore patterns similarly to file scan (best effort: if path exists, apply ignore)
+        p_abs = (repo / path_s).resolve()
+        if p_abs.exists() and _is_ignored(repo, p_abs, include_tests):
+            continue
+
+        # numstat uses "-" for binary or unknown
+        try:
+            added = int(add_s) if add_s != "-" else 0
+            deleted = int(del_s) if del_s != "-" else 0
+        except Exception:
+            continue
+
+        e = files.get(path_s)
+        if not e:
+            e = {
+                "churn_commits": 0,
+                "churn_added": 0,
+                "churn_deleted": 0,
+                "churn_total": 0,
+                "churn_last_modified": None,
+            }
+            files[path_s] = e
+
+        # commits count: count once per commit per file
+        e["churn_commits"] = int(e.get("churn_commits", 0) or 0) + 1
+        e["churn_added"] = int(e.get("churn_added", 0) or 0) + int(added)
+        e["churn_deleted"] = int(e.get("churn_deleted", 0) or 0) + int(deleted)
+        e["churn_total"] = int(e.get("churn_total", 0) or 0) + int(added) + int(deleted)
+
+        # git log is newest->oldest; first time we see a file is its last-modified
+        if e.get("churn_last_modified") is None and cur_date:
+            e["churn_last_modified"] = cur_date
+
+    return {"git": True, "head": head, "commits_scanned": commits_scanned, "files": files}
 
 
 def _compute_git_history_metrics(repo: Path, include_tests: bool, max_commits: int = 3000) -> Dict[str, Any]:
@@ -1745,7 +1991,7 @@ def _compute_git_history_metrics(repo: Path, include_tests: bool, max_commits: i
         nonlocal cur_hash, cur_subject, cur_date, cur_files
         if not cur_hash:
             return
-        # filter files by include_tests + ignored
+
         files = []
         for fp in cur_files:
             fp = fp.strip()
@@ -1761,7 +2007,6 @@ def _compute_git_history_metrics(repo: Path, include_tests: bool, max_commits: i
         touched = len(set(files))
         files_touched_per_change.append(int(touched))
 
-        # type from conventional commits
         ctype = "other"
         if isinstance(cur_subject, str):
             m = CONVENTIONAL_RE.match(cur_subject.strip())
@@ -1771,7 +2016,6 @@ def _compute_git_history_metrics(repo: Path, include_tests: bool, max_commits: i
         for fp in files:
             file_type_counts[fp][ctype] += 1
 
-        # issue IDs -> feature scatter
         issues = set()
         if isinstance(cur_subject, str):
             issues |= set(ISSUE_RE.findall(cur_subject))
@@ -1806,16 +2050,13 @@ def _compute_git_history_metrics(repo: Path, include_tests: bool, max_commits: i
 
     flush_commit()
 
-    # per-file entropy over change "types"
     file_entropy: Dict[str, float] = {}
     for fp, c in file_type_counts.items():
         file_entropy[fp] = float(round(_entropy_from_counter(c), 6))
 
-    # feature scatter from issues
     feature_scatter = {iss: int(len(comps)) for iss, comps in issue_components.items()}
     feature_scatter_top = sorted(feature_scatter.items(), key=lambda x: x[1], reverse=True)[:200]
 
-    # summary stats
     def pct(vals: List[int], q: float) -> Optional[float]:
         if not vals:
             return None
@@ -1833,18 +2074,30 @@ def _compute_git_history_metrics(repo: Path, include_tests: bool, max_commits: i
             "p99": pct(files_touched_per_change, 0.99),
             "max": max(files_touched_per_change) if files_touched_per_change else 0,
         },
-        "change_reason_entropy": file_entropy,  # proxy for DIVERGENT_CHANGE
+        "change_reason_entropy": file_entropy,
         "feature_scatter": dict(feature_scatter_top),
         "feature_scatter_raw_count": len(feature_scatter),
-        "commits_sample": commit_records[:200],  # cap
+        "commits_sample": commit_records[:200],
     }
     return payload
 
 
 # -----------------------------
-# Ranking logic (unchanged)
+# Ranking logic (now includes churn)
 # -----------------------------
-def _score_file(mi: Optional[float], loc: int, cc_max: float, mi_threshold: float = 65.0) -> Tuple[float, str]:
+def _score_file(
+    mi: Optional[float],
+    loc: int,
+    cc_max: float,
+    churn_total: Optional[int] = None,
+    churn_commits: Optional[int] = None,
+    mi_threshold: float = 65.0,
+) -> Tuple[float, str]:
+    """
+    Base hotspots: MI + size + max CC
+    Add churn as multiplier-like signal: high churn => prioritize (ROI).
+    Uses log scaling to avoid exploding on huge repos.
+    """
     reason = "signal"
     score = 0.0
 
@@ -1854,6 +2107,16 @@ def _score_file(mi: Optional[float], loc: int, cc_max: float, mi_threshold: floa
 
     score += loc * 0.5
     score += float(cc_max) * 0.6
+
+    # churn boosts priority (log-scaled)
+    ct = int(churn_total or 0)
+    cc = int(churn_commits or 0)
+    if ct > 0 or cc > 0:
+        score += log(1.0 + float(ct)) * 2.0
+        score += log(1.0 + float(cc)) * 6.0
+        if reason == "signal":
+            reason = "churn"
+
     return round(score, 4), reason
 
 
@@ -1905,6 +2168,7 @@ def analyze_python_batch(
     """
     Analiza SOLO los archivos indicados (batch-friendly).
     Ahora puede almacenar entity metrics (functions/classes) para tus smells.
+    Cache-aware: invalidamos si cambian flags relevantes.
     """
     repo = _resolve_repo(repo_path)
     req_files_norm = [x.replace("\\", "/") for x in files]
@@ -1914,6 +2178,13 @@ def analyze_python_batch(
 
     cache = _load_cache(repo) if use_cache else {"meta": {}, "files": {}, "repo": {}}
     cache_files: Dict[str, Any] = cache.get("files", {})
+
+    expected_cfg = {
+        "use_radon": bool(use_radon and RADON_AVAILABLE),
+        "compute_entities": bool(compute_entities),
+        "compute_ruff_unused": bool(compute_ruff_unused),
+        "max_file_bytes": int(max_file_bytes),
+    }
 
     tasks: List[str] = []
     skipped: List[str] = []
@@ -1930,7 +2201,7 @@ def analyze_python_batch(
         st_key = _file_stat_key(f)
         entry = cache_files.get(rel_norm)
 
-        if not force_recompute and entry and _cached_ok(entry, st_key):
+        if (not force_recompute) and entry and _cached_ok(entry, st_key) and entry.get("config") == expected_cfg:
             continue
         tasks.append(rel_norm)
 
@@ -1961,6 +2232,7 @@ def analyze_python_batch(
             "metrics": asdict(fa.metrics),
             "entities": fa.entities,
             "stat": _file_stat_key(f),
+            "config": expected_cfg,
         }
 
     out_files: Dict[str, Any] = {}
@@ -2014,6 +2286,8 @@ def analyze_python_repo_full(
     compute_architecture: bool = True,
     compute_git_history: bool = False,
     compute_ruff_unused: bool = False,
+    compute_churn: bool = True,
+    churn_max_commits: int = 5000,
 ) -> Dict[str, Any]:
     """
     Full pipeline:
@@ -2021,6 +2295,7 @@ def analyze_python_repo_full(
       2) opcional: clone metrics (dup_lines/blocks/clone_ratio)
       3) opcional: import graph (dependency_cycles, instability, density, etc.)
       4) opcional: git history proxies (files_touched_per_change, change_reason_entropy, feature_scatter)
+      5) opcional: churn per-file (commits + added/deleted) para priorizar refactors
     """
     repo = _resolve_repo(repo_path)
     files = [p.relative_to(repo).as_posix() for p in _iter_py_files(repo, include_tests)]
@@ -2067,6 +2342,34 @@ def analyze_python_repo_full(
         hist = _compute_git_history_metrics(repo, include_tests=include_tests)
         repo_out["history"] = hist
 
+    if compute_churn:
+        churn = _compute_churn_metrics_for_repo(repo, include_tests=include_tests, max_commits=int(churn_max_commits))
+        # apply churn to cached file metrics
+        churn_files = (churn or {}).get("files", {}) or {}
+        updated = 0
+        for rel, entry in cache_files.items():
+            m = (entry or {}).get("metrics", {}) or {}
+            ch = churn_files.get(rel)
+            if not ch:
+                continue
+            m["churn_commits"] = ch.get("churn_commits")
+            m["churn_added"] = ch.get("churn_added")
+            m["churn_deleted"] = ch.get("churn_deleted")
+            m["churn_total"] = ch.get("churn_total")
+            m["churn_last_modified"] = ch.get("churn_last_modified")
+            entry["metrics"] = m
+            cache_files[rel] = entry
+            updated += 1
+        repo_out["churn"] = {
+            "ok": bool(churn.get("git", False)),
+            "head": churn.get("head", None),
+            "commits_scanned": churn.get("commits_scanned", 0),
+            "files_with_churn": int(len(churn_files)),
+            "files_updated_in_cache": int(updated),
+            "max_commits": int(churn_max_commits),
+            "error": churn.get("error", None),
+        }
+
     cache["files"] = cache_files
     cache["repo"] = {**(cache.get("repo", {}) or {}), **repo_out}
     cache["meta"] = {**(cache.get("meta", {}) or {}), "repo_updated_at": _now_iso()}
@@ -2074,7 +2377,11 @@ def analyze_python_repo_full(
     if use_cache:
         _save_cache(repo, cache)
 
-    artifact = _write_artifact(repo, "analysis_repo_full.json", {"repo": str(repo), "generated_at": _now_iso(), "repo_metrics": repo_out})
+    artifact = _write_artifact(
+        repo,
+        "analysis_repo_full.json",
+        {"repo": str(repo), "generated_at": _now_iso(), "repo_metrics": repo_out},
+    )
     return {"status": "ok", "artifact": artifact, "files": len(files), "repo_metrics_keys": sorted(list(repo_out.keys())), "batch": batch}
 
 
@@ -2155,6 +2462,7 @@ def rank_python_files(
 ) -> Dict[str, Any]:
     """
     Ranking Top K desde cache + export hotspots_python.json
+    (ahora incluye churn para priorizar refactors)
     """
     repo = _resolve_repo(repo_path)
     cache = _load_cache(repo)
@@ -2168,7 +2476,16 @@ def rank_python_files(
         mi = m.get("mi", None)
         loc = int(m.get("loc", 0))
         cc_max = float(m.get("cc_max", 0.0))
-        score, reason = _score_file(mi, loc, cc_max, mi_threshold=mi_threshold)
+        churn_total = m.get("churn_total", None)
+        churn_commits = m.get("churn_commits", None)
+
+        score, reason = _score_file(
+            mi, loc, cc_max,
+            churn_total=churn_total,
+            churn_commits=churn_commits,
+            mi_threshold=mi_threshold
+        )
+
         ranked.append(
             {
                 "path": path,
@@ -2179,7 +2496,6 @@ def rank_python_files(
                 "mi": m.get("mi", None),
                 "loc": m.get("loc", 0),
                 "sloc": m.get("sloc", 0),
-                # smell aggregates
                 "clone_ratio": m.get("clone_ratio", None),
                 "dup_lines": m.get("dup_lines", None),
                 "dup_blocks": m.get("dup_blocks", None),
@@ -2187,6 +2503,12 @@ def rank_python_files(
                 "max_stmt_tokens": m.get("max_stmt_tokens", 0),
                 "magic_number_count": m.get("magic_number_count", 0),
                 "unused_symbols": m.get("unused_symbols", None),
+                # churn
+                "churn_commits": churn_commits,
+                "churn_total": churn_total,
+                "churn_added": m.get("churn_added", None),
+                "churn_deleted": m.get("churn_deleted", None),
+                "churn_last_modified": m.get("churn_last_modified", None),
                 # AST explainability
                 "n_classes": m.get("n_classes", 0),
                 "n_methods": m.get("n_methods", 0),
@@ -2247,12 +2569,13 @@ def detect_large_module_candidates(
                 "cc_sum": cs,
                 "cc_max": float(m.get("cc_max", 0.0) or 0.0),
                 "mi": m.get("mi", None),
-                # smell aggregates
                 "clone_ratio": m.get("clone_ratio", None),
                 "dup_lines": m.get("dup_lines", None),
                 "max_nesting_depth": m.get("max_nesting_depth", 0),
                 "unused_symbols": m.get("unused_symbols", None),
-                # AST explainability
+                # churn (helpful for prioritization)
+                "churn_commits": m.get("churn_commits", None),
+                "churn_total": m.get("churn_total", None),
                 "n_classes": int(m.get("n_classes", 0) or 0),
                 "n_methods": int(m.get("n_methods", 0) or 0),
                 "max_class_methods": int(m.get("max_class_methods", 0) or 0),
@@ -2287,18 +2610,13 @@ def detect_large_module_candidates(
         "candidates": candidates,
     }
     artifact = _write_artifact(repo, "large_module_candidates.json", payload)
-    return {
-        "status": "ok",
-        "artifact": artifact,
-        "thresholds": {"p_sloc": p_sloc, "p_cc_sum": p_ccsum},
-        "candidates": candidates,
-    }
+    return {"status": "ok", "artifact": artifact, "thresholds": {"p_sloc": p_sloc, "p_cc_sum": p_ccsum}, "candidates": candidates}
 
 
 @mcp.tool()
 def export_repo_metrics_json(repo_path: str) -> Dict[str, Any]:
     """
-    Exporta solo repo-level metrics (clones/architecture/history) a repo_metrics.json
+    Exporta solo repo-level metrics (clones/architecture/history/churn) a repo_metrics.json
     """
     repo = _resolve_repo(repo_path)
     cache = _load_cache(repo)
