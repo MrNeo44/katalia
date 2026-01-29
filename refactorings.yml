@@ -1,0 +1,284 @@
+schema: v1
+name: "KatalIA Refactoring Catalog (Atomic Ops)"
+version: "2026.01"
+
+# Nota: este catálogo es *conceptual* (language-agnostic). Las implementaciones
+# concretas dependen del parser/AST (Python/Java/etc.) y de precondiciones.
+# Fuentes base: catálogo de Fowler + refactoring.com + refactoring-to-patterns.
+references:
+  - key: FOWLER2018
+    type: book
+    title: "Refactoring: Improving the Design of Existing Code (2nd ed.)"
+    authors: ["Martin Fowler"]
+    year: 2018
+    publisher: "Addison-Wesley"
+  - key: REFACTORING_COM
+    type: web_catalog
+    title: "Catalog of Refactorings (web edition)"
+    year: 2019
+    authors: ["Martin Fowler"]
+  - key: KERIEVSKY2004
+    type: book
+    title: "Refactoring to Patterns"
+    authors: ["Joshua Kerievsky"]
+    year: 2004
+    publisher: "Addison-Wesley"
+  - key: TSANTALIS2011_JSS
+    type: journal
+    venue: "Journal of Systems and Software"
+    title: "Identification of extract method refactoring opportunities for the decomposition of methods"
+    authors: ["Nikolaos Tsantalis", "Alexander Chatzigeorgiou"]
+    year: 2011
+    doi: "10.1016/j.jss.2011.05.016"
+  - key: TSANTALIS2010_JSS
+    type: journal
+    venue: "Journal of Systems and Software"
+    title: "Identification of refactoring opportunities introducing polymorphism"
+    authors: ["Nikolaos Tsantalis", "Alexander Chatzigeorgiou"]
+    year: 2010
+    doi: "10.1016/j.jss.2009.09.017"
+
+refactorings:
+  # -------------------------
+  # A) Extract / Inline (control de tamaño y foco)
+  # -------------------------
+  - id: EXTRACT_METHOD
+    scope: function_or_method
+    intent: "Extraer un bloque coherente a un método/función con nombre."
+    tradeoffs:
+      benefits: ["Reduce tamaño y complejidad local", "Mejora testeo por unidades pequeñas"]
+      costs: ["Más funciones; navegación más fragmentada"]
+      risks: ["Extraer sin aislar dependencias deja el acoplamiento igual o peor"]
+    refs: [FOWLER2018, REFACTORING_COM, TSANTALIS2011_JSS]
+
+  - id: INLINE_METHOD
+    scope: function_or_method
+    intent: "Eliminar método trivial y mover su cuerpo al caller."
+    tradeoffs:
+      benefits: ["Reduce indirección innecesaria", "Mejora legibilidad cuando el método no aporta"]
+      costs: ["Puede duplicar lógica si se inlina en muchos lugares"]
+      risks: ["Inlinar lógica con efectos laterales puede confundir flujo"]
+
+  - id: EXTRACT_VARIABLE
+    scope: function_or_method
+    intent: "Nombrar una expresión compleja para hacer explícita la intención."
+    tradeoffs:
+      benefits: ["Aumenta claridad", "Facilita debugging/step-by-step"]
+      costs: ["Más variables locales"]
+      risks: ["Nombres malos = ruido"]
+
+  - id: INLINE_VARIABLE
+    scope: function_or_method
+    intent: "Eliminar variable temporal si no añade significado."
+    tradeoffs:
+      benefits: ["Menos ruido", "Evita estados intermedios innecesarios"]
+      costs: ["Expresión puede quedar larga otra vez"]
+      risks: ["Repetir cálculo caro si no es puro"]
+
+  # -------------------------
+  # B) Move / Re-organize (cohesión y responsabilidad)
+  # -------------------------
+  - id: MOVE_METHOD
+    scope: method_or_function
+    intent: "Mover comportamiento al tipo/módulo donde pertenece el dato o la responsabilidad."
+    tradeoffs:
+      benefits: ["Mejora cohesión", "Reduce 'envidia' hacia datos ajenos"]
+      costs: ["Rewire de llamadas / imports"]
+      risks: ["Puede romper encapsulación si se vuelve 'amigo' de internals"]
+
+  - id: MOVE_FIELD
+    scope: class
+    intent: "Mover un atributo/dato al tipo donde se usa realmente."
+    tradeoffs:
+      benefits: ["Reduce acoplamiento accidental", "Mejora modelado del dominio"]
+      costs: ["Cambios en inicialización/serialización"]
+      risks: ["Puede afectar compatibilidad (API, persistencia)"]
+
+  - id: SLIDE_STATEMENTS
+    scope: function_or_method
+    intent: "Reordenar statements para agrupar lo relacionado (sin cambiar comportamiento)."
+    tradeoffs:
+      benefits: ["Prepara extracción", "Clarifica etapas del algoritmo"]
+      costs: ["Cambios difusos en diff"]
+      risks: ["Si hay dependencias ocultas, puedes cambiar semántica sin querer"]
+
+  - id: SPLIT_PHASE
+    scope: function_or_method
+    intent: "Separar una función en fases (parseo/validación/cálculo/IO)."
+    tradeoffs:
+      benefits: ["Reduce mezcla de concerns", "Mejora testeo por fase"]
+      costs: ["Más funciones/estructuras intermedias"]
+      risks: ["Fases mal cortadas generan duplicación"]
+
+  # -------------------------
+  # C) Encapsulate / API hygiene (control de acceso y claridad)
+  # -------------------------
+  - id: ENCAPSULATE_FIELD
+    scope: class
+    intent: "Ocultar acceso directo a campos y exponer getters/setters o métodos de intención."
+    tradeoffs:
+      benefits: ["Mejor control de invariantes", "Facilita cambios internos sin romper clientes"]
+      costs: ["Más boilerplate"]
+      risks: ["Setters indiscriminados pueden empeorar diseño"]
+
+  - id: HIDE_DELEGATE
+    scope: class
+    intent: "Evitar cadenas de navegación exponiendo métodos del delegado en el host."
+    tradeoffs:
+      benefits: ["Reduce message chains", "Simplifica uso del cliente"]
+      costs: ["Host crece con métodos pasarela"]
+      risks: ["Puedes crear un Middle Man"]
+
+  - id: REMOVE_DEAD_CODE
+    scope: file_or_component
+    intent: "Eliminar símbolos/camino de código no usado (con red de pruebas/uso confirmada)."
+    tradeoffs:
+      benefits: ["Menos superficie de mantenimiento", "Menos confusión"]
+      costs: ["Requiere verificación (historial, cobertura, runtime)"]
+      risks: ["Borrar algo que sí se usa en runtime/feature flag"]
+
+  - id: REPLACE_MAGIC_NUMBER_WITH_CONSTANT
+    scope: file_or_component
+    intent: "Reemplazar literales ‘mágicos’ por constantes con nombre."
+    tradeoffs:
+      benefits: ["Claridad semántica", "Centraliza cambios"]
+      costs: ["Más símbolos"]
+      risks: ["Constantes mal ubicadas generan contaminación de módulos"]
+
+  - id: CHANGE_FUNCTION_DECLARATION
+    scope: function_or_method
+    intent: "Renombrar / cambiar firma para que exprese intención (incluye add/remove params)."
+    tradeoffs:
+      benefits: ["API más clara", "Reduce malentendidos y maluso"]
+      costs: ["Cambios en muchos callers"]
+      risks: ["Cambios de API rompen compatibilidad si no hay plan de migración"]
+
+  # -------------------------
+  # D) Object decomposition (clases grandes / responsabilidades)
+  # -------------------------
+  - id: EXTRACT_CLASS
+    scope: class
+    intent: "Separar responsabilidades en una nueva clase/objeto colaborador."
+    tradeoffs:
+      benefits: ["Reduce clases ‘gigantes’", "Mejora SRP y testabilidad"]
+      costs: ["Más clases y wiring"]
+      risks: ["Partición errónea = dos clases confusas"]
+
+  - id: INLINE_CLASS
+    scope: class
+    intent: "Eliminar clase que ya no justifica existir y mover su comportamiento al cliente/host."
+    tradeoffs:
+      benefits: ["Reduce sobre-abstracción", "Menos indirección"]
+      costs: ["Clase host crece"]
+      risks: ["Pierdes un límite útil si la clase sí representaba un concepto"]
+
+  - id: INTRODUCE_PARAMETER_OBJECT
+    scope: function_or_method
+    intent: "Reemplazar lista larga de parámetros por un objeto con nombre."
+    tradeoffs:
+      benefits: ["Reduce ‘Long Parameter List’", "Permite validar invariantes del conjunto"]
+      costs: ["Nuevo tipo/objeto"]
+      risks: ["Objeto anémico si solo empaqueta sin intención"]
+
+  - id: PRESERVE_WHOLE_OBJECT
+    scope: function_or_method
+    intent: "Pasar el objeto completo en vez de extraer muchos valores sueltos."
+    tradeoffs:
+      benefits: ["Firma más simple", "Menos repetición de extracción"]
+      costs: ["Mayor acoplamiento a ese tipo"]
+      risks: ["Exponer más de lo necesario si el callee empieza a husmear"]
+
+  # -------------------------
+  # E) Conditionals -> Polymorphism (pattern-enabling)
+  # -------------------------
+  - id: DECOMPOSE_CONDITIONAL
+    scope: function_or_method
+    intent: "Separar condición, rama then y rama else en unidades con nombre."
+    tradeoffs:
+      benefits: ["Aumenta claridad", "Prepara reemplazo por estrategia/estado"]
+      costs: ["Más métodos"]
+      risks: ["Si se extrae sin sentido, solo fragmenta"]
+
+  - id: REPLACE_NESTED_CONDITIONAL_WITH_GUARD_CLAUSES
+    scope: function_or_method
+    intent: "Reemplazar anidamiento profundo por retornos tempranos (guard clauses)."
+    tradeoffs:
+      benefits: ["Reduce nesting", "Hace el flujo más lineal"]
+      costs: ["Más returns; estilo no siempre gusta"]
+      risks: ["Si hay recursos/cleanup, requiere cuidado (finally/context managers)"]
+
+  - id: CONSOLIDATE_CONDITIONAL_EXPRESSION
+    scope: function_or_method
+    intent: "Unificar condiciones equivalentes o repetidas en una sola expresión con nombre."
+    tradeoffs:
+      benefits: ["Menos duplicación lógica", "Mejor intención"]
+      costs: ["Expresión puede quedar densa"]
+      risks: ["Cambiar precedencias sin querer si no se prueba"]
+
+  - id: REPLACE_CONDITIONAL_WITH_POLYMORPHISM
+    scope: class_or_hierarchy
+    intent: "Reemplazar condicional por dispatch polimórfico (subclases/estrategias/estado)."
+    tradeoffs:
+      benefits: ["Elimina type-checking y switches", "Abre extensión sin tocar el flujo principal"]
+      costs: ["Más tipos/objetos", "Más wiring"]
+      risks: ["Overengineering si hay pocas variantes estables"]
+    refs: [FOWLER2018, REFACTORING_COM, TSANTALIS2010_JSS]
+
+  - id: REPLACE_TYPE_CODE_WITH_SUBCLASSES
+    scope: class_or_hierarchy
+    intent: "Reemplazar ‘type code’ por subclases especializadas."
+    tradeoffs:
+      benefits: ["Variantes explícitas", "Prepara polimorfismo real"]
+      costs: ["Jerarquía crece"]
+      risks: ["Jerarquías rígidas si el tipo cambia en runtime"]
+
+  - id: REPLACE_TYPE_CODE_WITH_STATE_OR_STRATEGY
+    scope: class_or_hierarchy
+    intent: "Reemplazar ‘type code’ por objetos State/Strategy (composición)."
+    tradeoffs:
+      benefits: ["Variantes intercambiables en runtime", "Reduce condicionales"]
+      costs: ["Más objetos y coordinación"]
+      risks: ["Si no hay variación real, se vuelve teatro"]
+
+  # -------------------------
+  # F) Hierarchy shaping (para herencia sana)
+  # -------------------------
+  - id: PULL_UP_METHOD
+    scope: class_or_hierarchy
+    intent: "Subir comportamiento común a la superclase."
+    tradeoffs:
+      benefits: ["Reduce duplicación entre subclases"]
+      costs: ["Superclase crece"]
+      risks: ["Generalizar demasiado rompe claridad o LSP"]
+
+  - id: PUSH_DOWN_METHOD
+    scope: class_or_hierarchy
+    intent: "Bajar comportamiento que solo usan algunas subclases."
+    tradeoffs:
+      benefits: ["Evita superclases infladas"]
+      costs: ["Más dispersión de comportamiento"]
+      risks: ["Duplicación si muchas subclases lo necesitan"]
+
+  - id: EXTRACT_SUPERCLASS
+    scope: class_or_hierarchy
+    intent: "Crear superclase para factorizar comportamiento/estado común."
+    tradeoffs:
+      benefits: ["Reduce duplicación", "Estandariza contrato"]
+      costs: ["Nueva capa de herencia"]
+      risks: ["Herencia artificial si solo era reutilización puntual"]
+
+  - id: EXTRACT_INTERFACE
+    scope: class_or_component
+    intent: "Extraer un contrato para desacoplar usos de implementaciones."
+    tradeoffs:
+      benefits: ["Facilita mocks/DI", "Reduce acoplamiento a concreciones"]
+      costs: ["Más tipos/archivos"]
+      risks: ["Interfaces ‘por deporte’ sin valor semántico"]
+
+  - id: REPLACE_INHERITANCE_WITH_DELEGATION
+    scope: class_or_hierarchy
+    intent: "Cambiar herencia por composición cuando la jerarquía duele."
+    tradeoffs:
+      benefits: ["Reduce rigidez de jerarquías", "Mejor encapsulación"]
+      costs: ["Más plumbing y delegación"]
+      risks: ["Puedes terminar en Middle Man si delegas todo"]
