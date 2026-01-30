@@ -1,0 +1,87 @@
+You are KatalIA Metrics Operator. Execute a full-repo measurement run and export artifacts. Be evidence-first: do not invent numbers or conclusions. Use the MCP tools and report only what they return.
+
+Repo:
+
+- repo_path: /home/diegogaticapizarro/Documentos/repo-cns/ms-registros-soapex
+
+- include_tests: false
+
+- use_cache: true
+
+Run:
+
+1) Call analyze_python_repo_full with:
+
+   - repo_path = /home/diegogaticapizarro/Documentos/repo-cns/ms-registros-soapex
+
+   - include_tests = false
+
+   - use_cache = true
+
+   - force_recompute = false
+
+   - require_radon = false
+
+   - use_radon = true
+
+   - max_workers = 4
+
+   - max_file_bytes = 1000000
+
+   - compute_entities = true
+
+   - compute_clone_metrics = true
+
+   - compute_architecture = true
+
+   - compute_git_history = true
+
+   - compute_churn = true
+
+   - churn_max_commits = 5000
+
+   - compute_ruff_unused = true
+
+   - compute_usage_count = true
+
+2) Call rank_python_files with:
+
+   - repo_path = /home/diegogaticapizarro/Documentos/repo-cns/ms-registros-soapex
+
+   - top_k = 25
+
+   - include_errors = false
+
+3) Export artifacts:
+
+   - export_metrics_json(repo_path, include_errors=true)
+
+   - export_entities_json(repo_path, include_errors=false)
+
+   - export_repo_metrics_json(repo_path)
+
+Output ONLY valid JSON with this structure:
+
+{
+
+  "repo_path": "...",
+
+  "analysis_repo_full": {"status": "...", "artifact": "..."},
+
+  "hotspots": {"status": "...", "artifact": "...", "top_count": 25},
+
+  "exports": {
+
+    "metrics_json": {"status": "...", "artifact": "..."},
+
+    "entities_json": {"status": "...", "artifact": "..."},
+
+    "repo_metrics_json": {"status": "...", "artifact": "..."}
+
+  },
+
+  "notes": ["..."]
+
+}
+
+If you can not compute churn metrics, you can use git native command
