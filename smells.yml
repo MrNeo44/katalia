@@ -1,0 +1,879 @@
+schema: v1
+name: "KatalIA Smell Catalog (Signals-Only | Refactors vs Patterns)"
+version: "2026.01d-signals-only-rvp"
+
+# Filosofía:
+# - No se agregan señales en un score único.
+# - No percentiles / no combine mean.
+# - Se computan señales crudas + evidence y el LLM prioriza/diagnostica/decide.
+# - selection/top_k limita candidatos a enviar al LLM (no ranking agregado).
+
+defaults:
+  signals_mode: any
+  history_window_days: 180
+
+  selection:
+    strategy: top_k
+    k: 30
+
+  signal_values:
+    polarity_default: high  # semántica del indicador (alto peor) si aplica
+
+# ============================================================
+# A) Code smells (locales): archivos / funciones / clases
+# ============================================================
+code_smells:
+  - id: DUPLICATE_CODE
+    scope: file_or_component
+    signals_mode: any
+    requires: [clone]
+    signals:
+      - kind: clone
+        metric: clone_ratio
+        population: files_or_components
+      - kind: clone
+        metric: dup_lines
+        population: files_or_components
+        min_value: 1
+    evidence: [path, clone_ratio, dup_lines, dup_blocks]
+    remediations:
+      - id: R_DUP_A
+        approach: refactors
+        sequence: [EXTRACT_METHOD, RENAME_SYMBOL]
+        notes: "Consolidar fragmentos duplicados en una única unidad con nombre."
+      - id: R_DUP_B
+        approach: patterns
+        target_pattern: TEMPLATE_METHOD
+        notes: "Si la duplicación se repite en una jerarquía: formalizar esqueleto común."
+      - id: R_DUP_C
+        approach: patterns
+        target_pattern: STRATEGY
+        notes: "Si la duplicación corresponde a variantes de algoritmo: encapsular variantes."
+
+  - id: LONG_METHOD
+    scope: function_or_method
+    signals_mode: any
+    requires: [metric]
+    signals:
+      - kind: metric
+        metric: function_sloc
+        population: functions_or_methods
+      - kind: metric
+        metric: function_cc
+        population: functions_or_methods
+        min_value: 1
+    evidence: [path, function_name, lineno, function_sloc, function_cc]
+    remediations:
+      - id: R_LM_1
+        approach: refactors
+        sequence: [EXTRACT_METHOD, RENAME_SYMBOL]
+        notes: "Extraer pasos con intención clara; nombres mandan."
+      - id: R_LM_2
+        approach: refactors
+        sequence: [SPLIT_PHASE, EXTRACT_METHOD]
+        notes: "Separar fases (validación/cálculo/IO)."
+      - id: R_LM_3
+        approach: refactors
+        sequence: [EXTRACT_CLASS, MOVE_METHOD, MOVE_FIELD]
+        notes: "Si el método existe por clase concentradora, partir clase y mover responsabilidades."
+
+  - id: COMPLEX_CONDITIONAL
+    scope: function_or_method
+    signals_mode: any
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: bool_op_count
+        population: functions_or_methods
+        min_value: 1
+      - kind: metric
+        metric: nesting_depth
+        population: functions_or_methods
+        min_value: 1
+    evidence: [path, function_name, lineno, bool_op_count, nesting_depth]
+    remediations:
+      - id: R_CC_A
+        approach: refactors
+        sequence: [DECOMPOSE_CONDITIONAL, EXTRACT_VARIABLE, RENAME_SYMBOL]
+        notes: "Nombrar condiciones y ramas para que el flujo sea legible."
+      - id: R_CC_B
+        approach: refactors
+        sequence: [REPLACE_NESTED_CONDITIONAL_WITH_GUARD_CLAUSES]
+        notes: "Aplanar nesting cuando el flujo es 'early exit'."
+      - id: R_CC_C
+        approach: patterns
+        target_pattern: STRATEGY
+        notes: "Si hay variantes estables de comportamiento, migrar a Strategy/dispatch."
+      - id: R_CC_D
+        approach: patterns
+        target_pattern: CHAIN_OF_RESPONSIBILITY
+        notes: "Si son reglas/validaciones encadenadas, convertir en pipeline de handlers."
+
+  - id: COMPLEX_METHOD
+    scope: function_or_method
+    signals_mode: any
+    requires: [metric]
+    signals:
+      - kind: metric
+        metric: function_cc
+        population: functions_or_methods
+        min_value: 1
+    evidence: [path, function_name, lineno, function_cc]
+    remediations:
+      - id: R_CM_A
+        approach: refactors
+        sequence: [SLIDE_STATEMENTS, EXTRACT_METHOD, RENAME_SYMBOL]
+        notes: "Agrupar y extraer bloques para reducir decisiones por unidad."
+      - id: R_CM_B
+        approach: refactors
+        sequence: [SPLIT_PHASE]
+        notes: "Separar cálculo puro de IO/efectos."
+      - id: R_CM_C
+        approach: patterns
+        target_pattern: STRATEGY
+        notes: "Si la complejidad proviene de variantes, externalizar algoritmo."
+
+  - id: LONG_PARAMETER_LIST
+    scope: function_or_method
+    signals_mode: any
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: n_params
+        population: functions_or_methods
+        min_value: 1
+    evidence: [path, function_name, lineno, n_params]
+    remediations:
+      - id: R_LPL_1
+        approach: refactors
+        sequence: [INTRODUCE_PARAMETER_OBJECT]
+        notes: "Agrupar parámetros que viajan juntos bajo un nombre con intención."
+      - id: R_LPL_2
+        approach: refactors
+        sequence: [PRESERVE_WHOLE_OBJECT]
+        notes: "Si ya existe objeto portador, pasar el objeto en vez de desarmarlo."
+      - id: R_LPL_3
+        approach: patterns
+        target_pattern: BUILDER
+        notes: "Cuando el set de parámetros describe construcción/configuración compleja."
+
+  - id: LONG_STATEMENT
+    scope: function_or_method
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: max_stmt_tokens
+        population: functions_or_methods
+        min_value: 1
+    evidence: [path, function_name, lineno, max_stmt_tokens]
+    remediations:
+      - id: R_LS_1
+        approach: refactors
+        sequence: [EXTRACT_VARIABLE, RENAME_SYMBOL]
+        notes: "Partir expresiones largas en términos nombrados."
+      - id: R_LS_2
+        approach: refactors
+        sequence: [EXTRACT_METHOD]
+        notes: "Extraer el statement (o parte) como unidad con intención."
+
+  - id: MAGIC_NUMBER
+    scope: file_or_component
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: magic_number_count
+        population: files_or_components
+        min_value: 1
+    evidence: [path, magic_number_count, examples]
+    remediations:
+      - id: R_MN_1
+        approach: refactors
+        sequence: [REPLACE_MAGIC_NUMBER_WITH_CONSTANT, RENAME_SYMBOL]
+        notes: "Reemplazar literales por constantes con nombre."
+      - id: R_MN_2
+        approach: refactors
+        sequence: [INTRODUCE_PARAMETER_OBJECT]
+        notes: "Si son números relacionados (timeouts/límites), agrupar en config/objeto."
+
+  - id: MISSING_DEFAULT
+    scope: function_or_method
+    signals_mode: any
+    requires: [ast]
+    selection:
+      strategy: top_k
+      k: 200
+    signals:
+      - kind: ast
+        metric: match_without_wildcard
+        mode: boolean
+        value: true
+    evidence: [path, function_name, lineno]
+    remediations:
+      - id: R_MD_1
+        approach: refactors
+        sequence: [ADD_DEFAULT_BRANCH]
+        notes: "Agregar caso por defecto (wildcard/else) con comportamiento explícito."
+      - id: R_MD_2
+        approach: patterns
+        target_pattern: STRATEGY
+        notes: "Si el match modela variantes extensibles, migrar a Strategy/dispatch."
+      - id: R_MD_3
+        approach: patterns
+        target_pattern: STATE
+        notes: "Si el match depende de estado interno mutable, modelar estados."
+
+  - id: EMPTY_CATCH_CLAUSE
+    scope: function_or_method
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: empty_except_handlers
+        population: functions_or_methods
+        min_value: 1
+    evidence: [path, function_name, lineno, empty_except_handlers]
+    remediations:
+      - id: R_ECC_1
+        approach: refactors
+        sequence: [HANDLE_EXCEPTION]
+        notes: "Reemplazar catch vacío por manejo explícito: log, rethrow o compensación."
+      - id: R_ECC_2
+        approach: refactors
+        sequence: [EXTRACT_METHOD]
+        notes: "Extraer bloque try/except para aislar política de error y testear."
+
+  - id: LONG_IDENTIFIER
+    scope: file_or_component
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: max_identifier_length
+        population: files_or_components
+        min_value: 1
+    evidence: [path, max_identifier_length, examples]
+    remediations:
+      - id: R_LI_1
+        approach: refactors
+        sequence: [RENAME_SYMBOL]
+        notes: "Acortar nombres manteniendo intención."
+      - id: R_LI_2
+        approach: refactors
+        sequence: [EXTRACT_VARIABLE, RENAME_SYMBOL]
+        notes: "Si el nombre largo existe por falta de estructura, extraer conceptos."
+
+  - id: ABSTRACT_FUNCTION_CALL_FROM_CONSTRUCTOR
+    scope: class
+    signals_mode: any
+    requires: [ast]
+    selection:
+      strategy: top_k
+      k: 200
+    signals:
+      - kind: ast
+        metric: overridable_call_in_constructor
+        mode: boolean
+        value: true
+    evidence: [path, class_name, constructor_name, call_sites]
+    remediations:
+      - id: R_AFC_A
+        approach: refactors
+        sequence: [MOVE_METHOD, EXTRACT_METHOD]
+        notes: "Mover la llamada fuera del constructor (init explícito post-construcción)."
+      - id: R_AFC_B
+        approach: patterns
+        target_pattern: FACTORY_METHOD
+        notes: "Crear vía fábrica que retorna objeto ya inicializado (evita dispatch en ctor)."
+      - id: R_AFC_C
+        approach: patterns
+        target_pattern: BUILDER
+        notes: "Construcción por etapas para evitar callbacks/overrides durante construcción."
+
+  - id: LARGE_CLASS
+    scope: class
+    signals_mode: any
+    requires: [metric]
+    signals:
+      - kind: metric
+        metric: class_method_count
+        population: classes
+        min_value: 1
+      - kind: metric
+        metric: class_wmc
+        population: classes
+        min_value: 1
+    evidence: [path, class_name, class_method_count, class_wmc]
+    remediations:
+      - id: R_LC_A
+        approach: refactors
+        sequence: [EXTRACT_CLASS, MOVE_METHOD, MOVE_FIELD]
+        notes: "Separar responsabilidades y mover comportamiento donde pertenece."
+      - id: R_LC_B
+        approach: patterns
+        target_pattern: FACADE
+        notes: "Si la clase expone un subsistema, formalizar una fachada estable."
+      - id: R_LC_C
+        approach: patterns
+        target_pattern: MEDIATOR
+        notes: "Si coordina demasiadas colaboraciones, modelar coordinación como Mediator."
+
+  - id: DEAD_CODE
+    scope: file_or_component
+    signals_mode: any
+    requires: [static]
+    signals:
+      - kind: static
+        metric: unused_symbols
+        population: files_or_components
+        min_value: 1
+    evidence: [path, unused_symbols, examples]
+    remediations:
+      - id: R_DC_1
+        approach: refactors
+        sequence: [REMOVE_DEAD_CODE]
+        notes: "Eliminar símbolos no usados tras confirmar no hay uso dinámico/flags."
+      - id: R_DC_2
+        approach: refactors
+        sequence: [INLINE_METHOD, INLINE_CLASS]
+        notes: "Si viene de capas obsoletas, colapsarlas antes de borrar."
+
+  - id: FEATURE_ENVY
+    scope: function_or_method
+    signals_mode: any
+    requires: [semantic, graph]
+    signals:
+      - kind: semantic
+        metric: feature_envy_score
+        population: functions_or_methods
+        min_value: 0.0001
+    evidence: [path, function_name, lineno, feature_envy_score, external_refs]
+    remediations:
+      - id: R_FE_A
+        approach: refactors
+        sequence: [EXTRACT_METHOD, MOVE_METHOD]
+        notes: "Aislar la parte que usa datos externos y moverla al dueño de los datos."
+      - id: R_FE_B
+        approach: patterns
+        target_pattern: FACADE
+        notes: "Si el envy viene de cruzar subsistemas/navegar demasiado, poner una frontera/fachada."
+
+  - id: MESSAGE_CHAIN
+    scope: function_or_method
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: max_call_chain_length
+        population: functions_or_methods
+        min_value: 1
+    evidence: [path, function_name, lineno, max_call_chain_length, examples]
+    remediations:
+      - id: R_MC_A
+        approach: refactors
+        sequence: [HIDE_DELEGATE]
+        notes: "Cortar cadenas exponiendo métodos de intención en el primer objeto."
+      - id: R_MC_B
+        approach: patterns
+        target_pattern: FACADE
+        notes: "Si la cadena cruza subsistemas, introducir una fachada."
+
+  - id: MIDDLE_MAN
+    scope: class
+    signals_mode: any
+    requires: [semantic, ast]
+    signals:
+      - kind: semantic
+        metric: delegation_ratio
+        population: classes
+        min_value: 0.0001
+    evidence: [path, class_name, delegation_ratio, delegate_methods]
+    remediations:
+      - id: R_MM_1
+        approach: refactors
+        sequence: [REMOVE_MIDDLE_MAN]
+        notes: "Eliminar delegación trivial: clientes llaman al colaborador real."
+      - id: R_MM_2
+        approach: refactors
+        sequence: [INLINE_METHOD, INLINE_CLASS]
+        notes: "Si la clase solo reenvía, colapsarla."
+
+  - id: DATA_CLASS
+    scope: class
+    signals_mode: any
+    requires: [metric, semantic]
+    signals:
+      - kind: metric
+        metric: data_class_ratio
+        population: classes
+        min_value: 0.0001
+    evidence: [path, class_name, data_class_ratio, fields, methods]
+    remediations:
+      - id: R_DAC_A
+        approach: refactors
+        sequence: [ENCAPSULATE_FIELD]
+        notes: "Proteger invariantes: no exponer datos crudos."
+      - id: R_DAC_B
+        approach: refactors
+        sequence: [MOVE_METHOD, EXTRACT_METHOD]
+        notes: "Mover comportamiento hacia la clase de datos (Tell, don’t ask)."
+      - id: R_DAC_C
+        approach: patterns
+        target_pattern: STRATEGY
+        notes: "Si los datos solo deciden variantes, encapsular comportamiento en estrategias."
+
+  - id: PRIMITIVE_OBSESSION
+    scope: function_or_method
+    signals_mode: any
+    requires: [semantic, ast]
+    signals:
+      - kind: semantic
+        metric: primitive_param_ratio
+        population: functions_or_methods
+        min_value: 0.0001
+    evidence: [path, function_name, lineno, primitive_param_ratio, examples]
+    remediations:
+      - id: R_PO_1
+        approach: refactors
+        sequence: [INTRODUCE_PARAMETER_OBJECT]
+        notes: "Reemplazar primitivos relacionados por un objeto con validaciones."
+      - id: R_PO_2
+        approach: refactors
+        sequence: [CHANGE_FUNCTION_DECLARATION]
+        notes: "Simplificar firmas y expresar intención (tipos del dominio, no strings sueltos)."
+
+# ============================================================
+# B) Change smells (historial): repo / componente / entidad
+# ============================================================
+change_smells:
+  - id: SHOTGUN_SURGERY
+    scope: repo_or_component
+    signals_mode: any
+    requires: [history]
+    signals:
+      - kind: history
+        metric: files_touched_per_change
+        population: changes
+        window_days: 180
+        min_value: 2
+    evidence: [change_id, files_touched_per_change, files]
+    remediations:
+      - id: R_SS_1
+        approach: patterns
+        target_pattern: FACADE
+        notes: "Crear frontera estable para que cambios no se propaguen por todo el repo."
+      - id: R_SS_2
+        approach: patterns
+        target_pattern: MEDIATOR
+        notes: "Si el problema es coordinación entre muchos módulos, centralizar coordinación."
+
+  - id: DIVERGENT_CHANGE
+    scope: class_or_component
+    signals_mode: any
+    requires: [history]
+    signals:
+      - kind: history
+        metric: change_reason_entropy
+        population: entities
+        window_days: 180
+        min_value: 0.0001
+    evidence: [path, entity_name, change_reason_entropy]
+    remediations:
+      - id: R_DCH_1
+        approach: patterns
+        target_pattern: STRATEGY
+        notes: "Si las razones de cambio son variantes de comportamiento, encapsularlas como estrategias."
+      - id: R_DCH_2
+        approach: patterns
+        target_pattern: TEMPLATE_METHOD
+        notes: "Si hay flujo común con pasos variables por razón de cambio, usar template."
+
+# ============================================================
+# C) Design smells (diseño/arquitectura)
+# ============================================================
+design_smells:
+  - id: BLOB
+    scope: class_or_component
+    signals_mode: any
+    requires: [metric]
+    signals:
+      - kind: metric
+        metric: wmc
+        population: classes
+        min_value: 1
+      - kind: metric
+        metric: lcom
+        population: classes
+        min_value: 0.0001
+    evidence: [path, class_name, wmc, lcom]
+    remediations:
+      - id: R_BLOB_1
+        approach: patterns
+        target_pattern: FACADE
+        notes: "Si actúa como puerta de entrada a un subsistema, formalizar fachada."
+      - id: R_BLOB_2
+        approach: patterns
+        target_pattern: MEDIATOR
+        notes: "Si el blob existe por coordinación caótica, modelar coordinación como Mediator."
+
+  - id: SPAGHETTI_CODE
+    scope: function_or_method
+    signals_mode: any
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: function_cc
+        population: functions_or_methods
+        min_value: 1
+      - kind: metric
+        metric: nesting_depth
+        population: functions_or_methods
+        min_value: 1
+    evidence: [path, function_name, lineno, function_cc, nesting_depth]
+    remediations:
+      - id: R_SPAG_A
+        approach: refactors
+        sequence: [REPLACE_NESTED_CONDITIONAL_WITH_GUARD_CLAUSES, EXTRACT_METHOD]
+        notes: "Aplanar nesting y extraer pasos para que el flujo sea lineal."
+      - id: R_SPAG_B
+        approach: refactors
+        sequence: [SPLIT_PHASE]
+        notes: "Separar lógica pura vs efectos."
+      - id: R_SPAG_C
+        approach: patterns
+        target_pattern: STATE
+        notes: "Si depende de estados/transiciones, modelarlos explícitamente."
+
+  - id: FUNCTIONAL_DECOMPOSITION
+    scope: component
+    signals_mode: any
+    requires: [metric, semantic]
+    signals:
+      - kind: metric
+        metric: data_class_ratio
+        population: components
+        min_value: 0.0001
+    evidence: [component, data_class_ratio]
+    remediations:
+      - id: R_FD_1
+        approach: refactors
+        sequence: [MOVE_METHOD, ENCAPSULATE_FIELD]
+        notes: "Mover comportamiento hacia los datos (OO real)."
+      - id: R_FD_2
+        approach: refactors
+        sequence: [EXTRACT_CLASS, EXTRACT_INTERFACE]
+        notes: "Crear tipos del dominio con contratos claros."
+
+  - id: SWISS_ARMY_KNIFE
+    scope: class_or_component
+    signals_mode: any
+    requires: [metric, semantic]
+    signals:
+      - kind: metric
+        metric: public_api_size
+        population: types
+        min_value: 1
+    evidence: [path, entity_name, public_api_size]
+    remediations:
+      - id: R_SAK_1
+        approach: patterns
+        target_pattern: FACADE
+        notes: "Si expone demasiado del subsistema, poner una fachada minimalista."
+
+  - id: UNNECESSARY_ABSTRACTION
+    scope: class
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: usage_count
+        population: types
+        polarity: low
+    evidence: [path, class_name, usage_count]
+    remediations:
+      - id: R_UA_1
+        approach: refactors
+        sequence: [INLINE_CLASS, INLINE_METHOD]
+        notes: "Eliminar capas que no agregan intención."
+      - id: R_UA_2
+        approach: refactors
+        sequence: [REPLACE_INHERITANCE_WITH_DELEGATION]
+        notes: "Si existe por herencia forzada, pasar a composición."
+
+  - id: IMPERATIVE_ABSTRACTION
+    scope: class
+    signals_mode: any
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: abstract_has_logic_ratio
+        population: types
+        min_value: 0.0001
+    evidence: [path, class_name, abstract_has_logic_ratio]
+    remediations:
+      - id: R_IA_1
+        approach: patterns
+        target_pattern: TEMPLATE_METHOD
+        notes: "Si hay esqueleto común legítimo, formalizar Template Method."
+      - id: R_IA_2
+        approach: patterns
+        target_pattern: STRATEGY
+        notes: "Si la abstracción es rígida, migrar a composición (Strategy)."
+
+  - id: MULTIFACETED_ABSTRACTION
+    scope: class
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: topic_entropy
+        population: types
+        min_value: 0.0001
+    evidence: [path, class_name, topic_entropy, topics]
+    remediations:
+      - id: R_MFA_1
+        approach: patterns
+        target_pattern: FACADE
+        notes: "Mantener una cara simple (fachada) y delegar responsabilidades separadas."
+
+  - id: UNUTILIZED_ABSTRACTION
+    scope: class
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: usage_count
+        population: types
+        polarity: low
+    evidence: [path, class_name, usage_count]
+    remediations:
+      - id: R_UUA_1
+        approach: refactors
+        sequence: [REMOVE_DEAD_CODE]
+        notes: "Eliminar/archivar abstractions no usadas tras validar usos dinámicos."
+      - id: R_UUA_2
+        approach: refactors
+        sequence: [INLINE_CLASS]
+        notes: "Si hay un único consumidor, colapsar y simplificar."
+
+  - id: DUPLICATE_ABSTRACTION
+    scope: component
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: api_overlap
+        population: abstraction_pairs
+        min_value: 0.0001
+    evidence: [entity_a, entity_b, api_overlap]
+    remediations:
+      - id: R_DA_1
+        approach: patterns
+        target_pattern: BRIDGE
+        notes: "Si hay dos dimensiones de variación, separar abstracción/implementación."
+      - id: R_DA_2
+        approach: refactors
+        sequence: [MERGE_ABSTRACTIONS]
+        notes: "Si representan lo mismo, consolidarlas (una sola verdad)."
+
+  - id: DEFICIENT_ENCAPSULATION
+    scope: class
+    signals_mode: any
+    requires: [metric, ast]
+    signals:
+      - kind: metric
+        metric: public_field_ratio
+        population: classes
+        min_value: 0.0001
+    evidence: [path, class_name, public_field_ratio]
+    remediations:
+      - id: R_DE_1
+        approach: refactors
+        sequence: [ENCAPSULATE_FIELD]
+        notes: "Ocultar estado; exponer intención, no tripas."
+      - id: R_DE_2
+        approach: refactors
+        sequence: [CHANGE_FUNCTION_DECLARATION]
+        notes: "Reemplazar acceso directo por métodos de dominio (invariantes)."
+
+  - id: UNEXPLOITED_ENCAPSULATION
+    scope: class
+    signals_mode: any
+    requires: [ast]
+    signals:
+      - kind: ast
+        metric: direct_field_access_ratio
+        population: classes
+        min_value: 0.0001
+    evidence: [path, class_name, direct_field_access_ratio]
+    remediations:
+      - id: R_UE_1
+        approach: refactors
+        sequence: [ENCAPSULATE_FIELD, MOVE_METHOD]
+        notes: "Introducir métodos de intención y mover lógica al dueño del estado."
+      - id: R_UE_2
+        approach: refactors
+        sequence: [HIDE_DELEGATE]
+        notes: "Si ocurre por cadenas, cortar cadenas con delegación controlada."
+
+  - id: WIDE_HIERARCHY
+    scope: inheritance_tree
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: children_per_node
+        population: inheritance_nodes
+        min_value: 1
+    evidence: [root_type, children_per_node]
+    remediations:
+      - id: R_WH_1
+        approach: patterns
+        target_pattern: STRATEGY
+        notes: "Si la variación es de comportamiento, preferir composición (Strategy) a subclases."
+
+  - id: DEEP_HIERARCHY
+    scope: inheritance_tree
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: inheritance_depth
+        population: inheritance_nodes
+        min_value: 1
+    evidence: [leaf_type, inheritance_depth]
+    remediations:
+      - id: R_DH_1
+        approach: refactors
+        sequence: [REPLACE_INHERITANCE_WITH_DELEGATION]
+        notes: "Aplanar jerarquía migrando a composición donde aporte."
+      - id: R_DH_2
+        approach: refactors
+        sequence: [EXTRACT_SUPERCLASS]
+        notes: "Rehacer superclases con intención (o eliminarlas) si son capas vacías."
+
+  - id: MULTIPATH_HIERARCHY
+    scope: inheritance_graph
+    signals_mode: any
+    requires: [graph]
+    signals:
+      - kind: graph
+        metric: multiple_paths_count
+        population: inheritance_nodes
+        min_value: 2
+    evidence: [type_name, multiple_paths_count]
+    remediations:
+      - id: R_MPH_1
+        approach: patterns
+        target_pattern: BRIDGE
+        notes: "Si hay dos ejes de variación, separar abstracción/implementación."
+
+  - id: CYCLIC_HIERARCHY
+    scope: inheritance_graph
+    signals_mode: any
+    requires: [graph]
+    selection:
+      strategy: top_k
+      k: 200
+    signals:
+      - kind: graph
+        metric: inheritance_cycles
+        population: inheritance_graphs
+        min_value: 1
+    evidence: [cycle_nodes, inheritance_cycles]
+    remediations:
+      - id: R_CH_1
+        approach: patterns
+        target_pattern: BRIDGE
+        notes: "Separar roles (contratos) y pasar a composición para eliminar ciclos."
+      - id: R_CH_2
+        approach: refactors
+        sequence: [BREAK_INHERITANCE_CYCLE]
+        notes: "Romper ciclo reemplazando herencia por delegación en al menos un borde."
+
+  - id: UNFACTORED_HIERARCHY
+    scope: inheritance_tree
+    signals_mode: any
+    requires: [metric, semantic]
+    signals:
+      - kind: metric
+        metric: dup_across_subclasses
+        population: inheritance_nodes
+        min_value: 0.0001
+    evidence: [root_type, dup_across_subclasses]
+    remediations:
+      - id: R_UH_1
+        approach: patterns
+        target_pattern: TEMPLATE_METHOD
+        notes: "Si hay flujo común con pasos variables, formalizar Template Method."
+      - id: R_UH_2
+        approach: refactors
+        sequence: [PULL_UP_METHOD, PULL_UP_FIELD]
+        notes: "Factorizar duplicación hacia arriba cuando es realmente común."
+
+  - id: REBELLIOUS_HIERARCHY
+    scope: inheritance_tree
+    signals_mode: any
+    requires: [semantic]
+    selection:
+      strategy: top_k
+      k: 200
+    signals:
+      - kind: semantic
+        metric: override_contract_violations
+        population: inheritance_nodes
+        min_value: 1
+    evidence: [type_name, override_contract_violations]
+    remediations:
+      - id: R_RH_1
+        approach: refactors
+        sequence: [PUSH_DOWN_METHOD, EXTRACT_INTERFACE]
+        notes: "Alinear contratos: lo que no cumple, no debe heredar ese contrato."
+      - id: R_RH_2
+        approach: refactors
+        sequence: [REPLACE_INHERITANCE_WITH_DELEGATION]
+        notes: "Si LSP no se puede garantizar, composición y listo."
+
+  - id: MISSING_HIERARCHY
+    scope: inheritance_tree
+    signals_mode: any
+    requires: [semantic]
+    signals:
+      - kind: semantic
+        metric: type_similarity_clusters
+        population: components
+        min_value: 2
+    evidence: [cluster, examples]
+    remediations:
+      - id: R_MH_1
+        approach: refactors
+        sequence: [EXTRACT_INTERFACE]
+        notes: "Si hay similitud estructural, extraer contrato común para unificar uso."
+      - id: R_MH_2
+        approach: refactors
+        sequence: [EXTRACT_SUPERCLASS]
+        notes: "Si hay estado/flujo común real, crear superclase con intención."
+
+  - id: BROKEN_HIERARCHY
+    scope: inheritance_tree
+    signals_mode: any
+    requires: [semantic]
+    selection:
+      strategy: top_k
+      k: 200
+    signals:
+      - kind: semantic
+        metric: contract_breaking_overrides
+        population: inheritance_nodes
+        min_value: 1
+    evidence: [type_name, contract_breaking_overrides]
+    remediations:
+      - id: R_BH_1
+        approach: refactors
+        sequence: [FIX_OVERRIDE_CONTRACTS]
+        notes: "Reparar overrides que rompen contrato (invariantes, pre/post, excepciones)."
+      - id: R_BH_2
+        approach: refactors
+        sequence: [REPLACE_INHERITANCE_WITH_DELEGATION]
+        notes: "Si el contrato no se puede sostener, romper herencia y usar composición."

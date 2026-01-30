@@ -1,365 +1,284 @@
 schema: v1
-name: "KatalIA Pattern Tradeoffs (Refactoring Guru)"
-version: "1.0"
+name: "KatalIA Pattern Catalog (GoF - Tradeoffs Only)"
+version: "2026.01-gof-tradeoffs"
 
-# Este archivo lo carga tu agente (no el MCP).
-# Úsalo para:
-# - scoring/selección (penalizar risk/bloat)
-# - explicación (evidence: chosen_tradeoffs)
-# - guardrails (avoid_if)
-
-pattern_catalog:
-
+patterns:
   # -------------------------
   # Creational (5)
   # -------------------------
-  ABSTRACT_FACTORY:
-    category: creational
-    intent: "Crear familias de objetos relacionados sin acoplarte a clases concretas."
+  - id: FACTORY_METHOD
+    group: creational
+    intent: "Delegar la creación a subclases/implementaciones para desacoplar 'new' del uso."
     tradeoffs:
-      pros:
-        - "Asegura compatibilidad entre productos de la misma familia."
-        - "Evita acoplamiento fuerte entre cliente y clases concretas."
-        - "Mejora SRP al centralizar creación."
-        - "Favorece OCP al permitir nuevas familias sin tocar clientes."
-      cons:
-        - "Aumenta complejidad por más interfaces/clases."
-    avoid_if:
-      - "No existen familias reales de productos/variantes."
-      - "Solo hay 1 implementación y no habrá más."
-    bloat_risk: medium_high
-    risk: medium
+      benefits:
+        - "Reduce acoplamiento a clases concretas; facilita extender productos."
+        - "Centraliza reglas de creación sin ensuciar el código cliente."
+      costs:
+        - "Más clases/indirección; puede sentirse como burocracia si el dominio es simple."
+      risks:
+        - "Explosión de fábricas si se usa para cada cosa sin criterio."
 
-  BUILDER:
-    category: creational
-    intent: "Construir objetos complejos paso a paso."
+  - id: ABSTRACT_FACTORY
+    group: creational
+    intent: "Crear familias de objetos relacionados sin especificar clases concretas."
     tradeoffs:
-      pros:
-        - "Construcción paso a paso (control fino del proceso)."
-        - "Reutiliza el mismo proceso para distintas representaciones."
-        - "Aísla la lógica de construcción del resto del código."
-      cons:
-        - "Incrementa complejidad: normalmente requiere múltiples clases."
-    avoid_if:
-      - "Objeto simple: dataclass/kwargs/config basta."
-      - "No hay variaciones de construcción."
-    bloat_risk: medium
-    risk: medium
-    # Fuente: sección Pros/Cons
-    # (paráfrasis)
-  
-  FACTORY_METHOD:
-    category: creational
-    intent: "Delegar creación a subclases/métodos para evitar acoplamiento al producto concreto."
-    tradeoffs:
-      pros:
-        - "Evita acoplamiento fuerte entre creador y productos concretos."
-        - "Mejora SRP: separa creación de uso."
-        - "Favorece OCP: puedes introducir nuevos productos sin romper clientes."
-      cons:
-        - "Puede requerir muchas subclases para cada tipo de producto."
-    avoid_if:
-      - "Creación trivial y sin variantes."
-    bloat_risk: medium
-    risk: low_medium
+      benefits:
+        - "Consistencia entre productos de una misma familia."
+        - "Cambiar familia completa suele ser más fácil (un punto de switch)."
+      costs:
+        - "Aumenta complejidad inicial; muchas interfaces."
+      risks:
+        - "Añadir un nuevo tipo de producto (no una familia) puede doler: toca varias fábricas."
 
-  PROTOTYPE:
-    category: creational
-    intent: "Clonar objetos existentes sin acoplarte a clases concretas."
+  - id: BUILDER
+    group: creational
+    intent: "Construir objetos complejos paso a paso separando construcción de representación."
     tradeoffs:
-      pros:
-        - "Clonas sin acoplarte a clases concretas."
-        - "Evita repetir inicializaciones costosas."
-        - "Simplifica la creación cuando configuraciones se parecen."
-      cons:
-        - "Clonar objetos complejos puede ser difícil (referencias/ciclos)."
-    avoid_if:
-      - "El estado es altamente mutable y fácil de compartir mal."
-      - "La clonación profunda es propensa a bugs."
-    bloat_risk: low_medium
-    risk: medium
+      benefits:
+        - "Control fino de construcción; evita constructores gigantes."
+        - "Mejor legibilidad para objetos con muchas opciones."
+      costs:
+        - "Más código ceremonial (builder, director opcional)."
+      risks:
+        - "Overkill si el objeto no es realmente complejo o no tiene variantes."
 
-  SINGLETON:
-    category: creational
-    intent: "Garantizar una sola instancia y un punto de acceso global."
+  - id: PROTOTYPE
+    group: creational
+    intent: "Crear objetos clonando un prototipo en vez de instanciarlos desde cero."
     tradeoffs:
-      pros:
-        - "Garantiza una única instancia."
-        - "Entrega un punto de acceso global."
-        - "Inicialización bajo demanda."
-      cons:
-        - "Viola SRP (resuelve dos problemas a la vez)."
-        - "Puede esconder mal diseño (acoplamiento implícito)."
-        - "Complica multihilo."
-        - "Dificulta unit testing (mocking/aislamiento)."
-    avoid_if:
-      - "Casi siempre: preferir DI/factory/module-level provider."
-    bloat_risk: low
-    risk: high
+      benefits:
+        - "Útil cuando crear es caro o depende de configuración dinámica."
+        - "Evita jerarquías de fábricas para combinaciones múltiples."
+      costs:
+        - "Clonado correcto puede ser difícil (deep vs shallow)."
+      risks:
+        - "Clones que comparten estado accidentalmente (bugs sutiles)."
+
+  - id: SINGLETON
+    group: creational
+    intent: "Asegurar una sola instancia global y un punto de acceso."
+    tradeoffs:
+      benefits:
+        - "Acceso simple a un recurso compartido."
+      costs:
+        - "Introduce estado global: complica pruebas y razonamiento."
+      risks:
+        - "Se convierte en 'Dios oculto' del sistema; difícil de refactorizar después."
 
   # -------------------------
   # Structural (7)
   # -------------------------
-  ADAPTER:
-    category: structural
-    intent: "Hacer compatibles interfaces incompatibles mediante un wrapper."
+  - id: ADAPTER
+    group: structural
+    intent: "Hacer compatibles interfaces que no encajan (wrapper traductor)."
     tradeoffs:
-      pros:
-        - "Separa/encapsula conversión o integración."
-        - "Evita acoplamiento al proveedor/tercero."
-        - "Favorece OCP al introducir nuevos adaptadores."
-      cons:
-        - "Añade capas/clases extra (indirección)."
-    avoid_if:
-      - "La adaptación es trivial (solo renombrar/1-2 líneas)."
-    bloat_risk: medium
-    risk: low_medium
+      benefits:
+        - "Integra legacy/terceros sin reescribirlos."
+        - "Aísla cambios externos del dominio."
+      costs:
+        - "Capa extra; puede proliferar en integraciones grandes."
+      risks:
+        - "Adaptadores encadenados: termina siendo un 'teléfono descompuesto'."
 
-  BRIDGE:
-    category: structural
-    intent: "Separar abstracción de implementación para variar ambas independientemente."
+  - id: BRIDGE
+    group: structural
+    intent: "Separar abstracción de implementación para que evolucionen independiente."
     tradeoffs:
-      pros:
-        - "Permite evolucionar abstracción e implementación sin tocarse."
-        - "Reduce explosión de subclases por combinaciones."
-        - "Organiza mejor cuando hay 2 dimensiones de variación."
-      cons:
-        - "Incrementa complejidad estructural (más capas)."
-    avoid_if:
-      - "Solo existe 1 dimensión de variación real."
-    bloat_risk: high
-    risk: medium_high
+      benefits:
+        - "Evita explosión de subclases (combinaciones de variantes)."
+        - "Permite cambiar implementación sin tocar la abstracción."
+      costs:
+        - "Más composición/indirección; curva de lectura."
+      risks:
+        - "Si no hay dos dimensiones reales de variación, queda artificial."
 
-  COMPOSITE:
-    category: structural
-    intent: "Tratar objetos individuales y composiciones (árbol) de forma uniforme."
+  - id: COMPOSITE
+    group: structural
+    intent: "Tratar objetos individuales y composiciones de forma uniforme (árbol)."
     tradeoffs:
-      pros:
-        - "Simplifica trabajo con estructuras en árbol."
-        - "Favorece OCP para nuevos tipos de nodos."
-        - "Reduce lógica condicional de manejo de hojas/ramas."
-      cons:
-        - "Puede volver difícil restringir qué tipos van en el árbol."
-    avoid_if:
-      - "No existe jerarquía real (no hay árbol)."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Modela jerarquías naturalmente; simplifica cliente."
+        - "Operaciones recursivas se vuelven directas."
+      costs:
+        - "Difícil restringir qué nodos pueden tener hijos."
+      risks:
+        - "Árbol demasiado flexible: reglas de negocio quedan difusas."
 
-  DECORATOR:
-    category: structural
-    intent: "Agregar comportamiento a objetos dinámicamente sin herencia."
+  - id: DECORATOR
+    group: structural
+    intent: "Agregar responsabilidades dinámicamente envolviendo objetos."
     tradeoffs:
-      pros:
-        - "Extiende comportamiento sin subclases."
-        - "Puedes combinar/quitar responsabilidades en runtime."
-        - "Favorece SRP separando responsabilidades."
-      cons:
-        - "Muchos wrappers pequeños; debug más difícil."
-        - "El orden de decoradores puede importar."
-    avoid_if:
-      - "Vas a terminar con una “lasaña” de wrappers."
-      - "Necesitas trazabilidad simple y directa."
-    bloat_risk: medium_high
-    risk: medium_high
+      benefits:
+        - "Evita subclases por combinaciones; composición flexible."
+        - "Permite features 'plug-in'."
+      costs:
+        - "Muchas capas; depurar se pone entretenido (en el mal sentido)."
+      risks:
+        - "Orden de decoradores importa; comportamiento emergente difícil de prever."
 
-  FACADE:
-    category: structural
-    intent: "Dar una interfaz simple a un subsistema complejo."
+  - id: FACADE
+    group: structural
+    intent: "Proveer una interfaz simple a un subsistema complejo."
     tradeoffs:
-      pros:
-        - "Aísla clientes de complejidad del subsistema."
-        - "Reduce acoplamiento cliente↔subsistema."
-        - "Punto único de entrada más amigable."
-      cons:
-        - "Riesgo de convertirse en God Object."
-    avoid_if:
-      - "Solo delega sin orquestación real."
-      - "Crece sin control (mega-clase)."
-    bloat_risk: medium_high
-    risk: medium
+      benefits:
+        - "Reduce fricción de uso; baja acoplamiento del cliente al subsistema."
+        - "Buena frontera para modularizar."
+      costs:
+        - "Otra capa a mantener; puede duplicar funcionalidades."
+      risks:
+        - "Se vuelve un 'mega wrapper' que oculta demasiado y frena casos avanzados."
 
-  FLYWEIGHT:
-    category: structural
-    intent: "Reducir memoria compartiendo estado inmutable (intrínseco)."
+  - id: FLYWEIGHT
+    group: structural
+    intent: "Compartir estado intrínseco para ahorrar memoria con muchos objetos similares."
     tradeoffs:
-      pros:
-        - "Ahorra RAM al compartir objetos similares."
-      cons:
-        - "Más complejidad: separar estado intrínseco/extrínseco."
-        - "Puede aumentar overhead en runtime por gestión de estado externo."
-    avoid_if:
-      - "No hay muchos objetos repetidos/inmutables."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Ahorro fuerte en memoria/costos cuando hay enormes cantidades."
+      costs:
+        - "Complejidad: separar estado intrínseco vs extrínseco."
+      risks:
+        - "Si el supuesto de repetición no se cumple, solo agregaste complejidad."
 
-  PROXY:
-    category: structural
-    intent: "Controlar acceso a un objeto (lazy, cache, auth, logging, retry, etc.)."
+  - id: PROXY
+    group: structural
+    intent: "Controlar acceso a un objeto (lazy, remoto, cache, protección)."
     tradeoffs:
-      pros:
-        - "Controla el ciclo de vida/acceso sin cambiar el servicio."
-        - "Permite cross-cutting (cache/log/retry) centralizado."
-        - "Favorece OCP para extender sin tocar el core."
-      cons:
-        - "Indirección extra (posible latencia/overhead)."
-        - "Aumenta complejidad."
-    avoid_if:
-      - "No hay control real que aportar (solo wrapper decorativo)."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Lazy-loading, caching, control de acceso sin cambiar cliente."
+      costs:
+        - "Indirección extra; puede ocultar latencia/errores."
+      risks:
+        - "Proxy que se transforma en 'mini sistema' con lógica difícil de testear."
 
   # -------------------------
-  # Behavioral (10 en Guru; el catálogo “classic” totaliza 22)
+  # Behavioral (11)
   # -------------------------
-  CHAIN_OF_RESPONSIBILITY:
-    category: behavioral
-    intent: "Encadenar handlers para procesar una request sin acoplar emisor a receptor."
+  - id: CHAIN_OF_RESPONSIBILITY
+    group: behavioral
+    intent: "Pasar una solicitud por una cadena de handlers hasta que alguien la procese."
     tradeoffs:
-      pros:
-        - "Reduce acoplamiento: emisor no conoce receptor final."
-        - "Favorece SRP separando handlers."
-        - "Favorece OCP: agregas handlers sin tocar el resto."
-      cons:
-        - "Una request puede quedar sin manejar si no hay fallback."
-    avoid_if:
-      - "No puedes garantizar un handler por defecto."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Desacopla emisor de receptor; composición flexible."
+      costs:
+        - "Flujo menos explícito; debugging requiere seguir la cadena."
+      risks:
+        - "Solicitud puede quedar sin manejar si no hay fallback claro."
 
-  COMMAND:
-    category: behavioral
-    intent: "Encapsular una solicitud como objeto (cola/log/undo)."
+  - id: COMMAND
+    group: behavioral
+    intent: "Encapsular una acción como objeto (cola, undo, logs, scheduling)."
     tradeoffs:
-      pros:
-        - "SRP: separa invocación de implementación."
-        - "OCP: nuevos comandos sin tocar invocador."
-        - "Permite cola, logging, undo/redo."
-      cons:
-        - "Más clases/objetos (bloat)."
-    avoid_if:
-      - "Una llamada directa es suficiente; no hay cola/log/undo."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Soporta undo/redo, auditoría, colas y ejecución diferida."
+      costs:
+        - "Muchos objetos comando; más boilerplate."
+      risks:
+        - "Diseño se infla si solo necesitabas llamar una función."
 
-  ITERATOR:
-    category: behavioral
+  - id: INTERPRETER
+    group: behavioral
+    intent: "Definir gramática y evaluar expresiones (DSL simple)."
+    tradeoffs:
+      benefits:
+        - "Rápido para lenguajes pequeños; extensible por reglas."
+      costs:
+        - "Escala mal para gramáticas grandes; rendimiento y complejidad."
+      risks:
+        - "Termina siendo un parser casero frágil si el DSL crece."
+
+  - id: ITERATOR
+    group: behavioral
     intent: "Recorrer colecciones sin exponer su representación interna."
     tradeoffs:
-      pros:
-        - "SRP: separa recorrido de la colección."
-        - "OCP: nuevos recorridos sin tocar colecciones."
-        - "Permite recorridos simultáneos/independientes."
-      cons:
-        - "Overkill si la estructura es simple."
-    avoid_if:
-      - "Recorridos simples y no repetidos."
-    bloat_risk: low_medium
-    risk: low_medium
+      benefits:
+        - "Uniforma traversal; permite múltiples recorridos."
+      costs:
+        - "Más tipos/abstracciones si el lenguaje ya lo trae resuelto."
+      risks:
+        - "Iteradores custom mal hechos rompen consistencia o concurrencia."
 
-  MEDIATOR:
-    category: behavioral
-    intent: "Centralizar comunicación compleja entre objetos para reducir acoplamiento many-to-many."
+  - id: MEDIATOR
+    group: behavioral
+    intent: "Centralizar comunicación entre objetos para reducir acoplamiento directo."
     tradeoffs:
-      pros:
-        - "Reduce acoplamiento entre componentes que “conversan” mucho."
-        - "SRP/OCP al mover coordinación a un mediador."
-      cons:
-        - "El mediador puede convertirse en God Object."
-    avoid_if:
-      - "Interacciones pocas; no hay “chat grupal” real."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Disminuye dependencia cruzada; coordina interacciones complejas."
+      costs:
+        - "El mediador puede crecer y volverse un 'mini dios'."
+      risks:
+        - "Se convierte en punto único de falla y cuello de botella conceptual."
 
-  MEMENTO:
-    category: behavioral
-    intent: "Guardar y restaurar snapshots sin romper encapsulación."
+  - id: MEMENTO
+    group: behavioral
+    intent: "Capturar y restaurar estado sin violar encapsulación (snapshots)."
     tradeoffs:
-      pros:
-        - "Snapshots/undo sin exponer internals."
-        - "Mantiene encapsulación del originator."
-      cons:
-        - "Costo de memoria/almacenamiento."
-        - "Manejo de ciclo de vida de mementos puede ser complejo."
-    avoid_if:
-      - "No necesitas rollback/undo."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Undo/restore sin exponer internals al exterior."
+      costs:
+        - "Memoria/almacenamiento de snapshots; serialización compleja."
+      risks:
+        - "Snapshots inconsistentes si el objeto tiene recursos externos."
 
-  OBSERVER:
-    category: behavioral
-    intent: "Notificar a múltiples dependientes cuando cambia el estado."
+  - id: OBSERVER
+    group: behavioral
+    intent: "Notificar automáticamente a suscriptores ante cambios (pub-sub)."
     tradeoffs:
-      pros:
-        - "OCP: suscriptores nuevos sin tocar el subject."
-        - "Acoplamiento bajo (publish/subscribe)."
-      cons:
-        - "Orden de notificación puede ser impredecible."
-        - "Riesgo de fugas si no se desuscribe bien."
-    avoid_if:
-      - "Solo hay 1 consumidor fijo (callback directo basta)."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Desacopla productor/consumidor; reactividad limpia."
+      costs:
+        - "Orden de notificación y cascadas pueden complicar."
+      risks:
+        - "Fugas por suscripciones no removidas; efectos secundarios ocultos."
 
-  STATE:
-    category: behavioral
-    intent: "Cambiar comportamiento según estado sin mega-if."
+  - id: STATE
+    group: behavioral
+    intent: "Cambiar comportamiento según estado interno usando objetos estado."
     tradeoffs:
-      pros:
-        - "Elimina condicionales grandes por estado."
-        - "SRP: cada estado encapsula su lógica."
-        - "OCP: agregas estados sin tocar otros."
-      cons:
-        - "Aumenta número de clases."
-    avoid_if:
-      - "Pocos estados y rara vez cambian."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Evita condicionales gigantes; estados explícitos y extensibles."
+      costs:
+        - "Aumenta número de clases; requiere disciplina."
+      risks:
+        - "Estados mal definidos generan transiciones confusas o duplicadas."
 
-  STRATEGY:
-    category: behavioral
-    intent: "Intercambiar algoritmos/variantes en runtime."
+  - id: STRATEGY
+    group: behavioral
+    intent: "Encapsular algoritmos intercambiables; elegir en runtime."
     tradeoffs:
-      pros:
-        - "Intercambias algoritmos sin tocar el cliente."
-        - "Aísla implementaciones de algoritmos."
-        - "Reemplaza herencia por composición."
-        - "OCP: agregas estrategias nuevas fácilmente."
-      cons:
-        - "Cliente debe entender diferencias para elegir estrategia."
-        - "Aumenta cantidad de objetos."
-    avoid_if:
-      - "Solo 1-2 variantes y no cambian."
-      - "La elección nunca cambia (hardcode basta)."
-    bloat_risk: medium
-    risk: medium
+      benefits:
+        - "Reduce condicionales; facilita test A/B de algoritmos."
+        - "Extensión por composición (sin tocar cliente)."
+      costs:
+        - "Más objetos y indirección; hay que gestionar wiring."
+      risks:
+        - "Si solo hay 1-2 variantes estables, puede ser puro cosplay arquitectónico."
 
-  TEMPLATE_METHOD:
-    category: behavioral
-    intent: "Definir esqueleto de algoritmo y delegar pasos a subclases."
+  - id: TEMPLATE_METHOD
+    group: behavioral
+    intent: "Definir esqueleto de un algoritmo y delegar pasos variables a subclases."
     tradeoffs:
-      pros:
-        - "Reutiliza el esqueleto de un algoritmo (menos duplicación)."
-        - "Permite redefinir pasos específicos sin reescribir todo."
-        - "SRP/OCP al separar pasos variables."
-      cons:
-        - "Restricciones por herencia (menos flexible que composición)."
-        - "Puede violar LSP si se abusa."
-    avoid_if:
-      - "La variación se modela mejor con Strategy/composición."
-    bloat_risk: low_medium
-    risk: low_medium
+      benefits:
+        - "Reuso estructurado; evita duplicación de flujo."
+      costs:
+        - "Acopla al modelo de herencia; menos flexible que composición."
+      risks:
+        - "Jerarquías rígidas; cambios en el template impactan a muchos."
 
-  VISITOR:
-    category: behavioral
-    intent: "Agregar operaciones a una estructura estable sin modificar sus clases."
+  - id: VISITOR
+    group: behavioral
+    intent: "Separar operaciones de una estructura de objetos (doble despacho)."
     tradeoffs:
-      pros:
-        - "Nuevas operaciones sin tocar elementos (OCP para operaciones)."
-        - "Agrupa lógica relacionada en un visitor."
-      cons:
-        - "Dificulta agregar nuevos tipos de elementos (rompe visitors)."
-        - "Puede exponer detalles internos/romper encapsulación."
-    avoid_if:
-      - "La estructura de elementos cambia seguido."
-    bloat_risk: high
-    risk: medium_high
+      benefits:
+        - "Agregar nuevas operaciones sin tocar las clases visitadas."
+        - "Agrupa lógica relacionada en visitantes."
+      costs:
+        - "Agregar nuevos tipos de elementos es costoso (toca todos los visitors)."
+      risks:
+        - "Complejidad mental alta; fácil abusar y volverlo críptico."
+
+  # -------------------------
+  # Notes (opcional para KatalIA)
+  # -------------------------
+notes:
+  - "Trade-offs = guías, no leyes físicas: patrones no son universalmente buenos o malos."
+  - "Si aplicas varios patrones juntos, los costos pueden acumularse (acoplamiento entre patrones)."
